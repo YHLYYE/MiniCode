@@ -1,0 +1,44 @@
+# ==============================
+# MiniCode — .gitignore
+# Python / Agent 项目专用
+# ==============================
+
+# --- Python 字节码缓存（每次运行自动生成，100% 可丢弃）---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# --- 虚拟环境 ---
+.venv/
+venv/
+env/
+ENV/
+.venv*/
+
+# --- 测试缓存 ---
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# --- IDE / 编辑器 ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- 操作系统 ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- MiniCode 运行产物（密钥/会话/记忆，属于个人数据，禁止入库）---
+.env
+.minicode/
+
+# --- 个人隐私文件（简历草稿、联系方式）---
+docs/resume_*.md
+docs/plans/
