@@ -68,7 +68,7 @@ Desktop/minicode/
 │   ├── skill.py               # Skill 系统（渐进式披露 + 二阶段路由）
 │   ├── memory.py              # 三类记忆 + 可插拔 MemoryStore
 │   ├── compression.py         # 四级降级链
-│   ├── multi_agent.py         # AgentTool 统一路由（explore/general/worktree/team）
+│   ├── multi_agent.py         # AgentTool 统一路由（explore/general/team）
 │   └── security.py            # 四层纵深防御
 ├── skills/                    # Skill 定义文件
 │   └── code_review.md
@@ -409,10 +409,10 @@ class Tool(ABC):
 | Read | ✅ | ✅ | - | 读文件（通过 FilesystemBackend） |
 | Write | - | - | ✅ | 写文件（通过 FilesystemBackend） |
 | Bash | - | - | ✅ | Shell 命令（23+ 正则 + 白名单 + 超时） |
-| WebFetch | ✅ | ✅ | - | 获取网页内容 |
-| WebSearch | ✅ | ✅ | - | 搜索引擎 |
-| TodoWrite | - | - | - | 任务列表管理 |
-| Agent | - | ✅ | - | 派发子 Agent（explore/general/worktree/team） |
+| WebFetch | ✅ | ✅ | - | 获取网页内容（未接入 main.py） |
+| WebSearch | ✅ | ✅ | - | 搜索引擎（未接入 main.py） |
+| TodoWrite | - | - | - | 任务列表管理（未接入 main.py） |
+| Agent | - | ✅ | - | 派发子 Agent（explore/general/team） |
 | Skill | ✅ | ✅ | - | 加载 Skill 指令 |
 | RecallMemory | ✅ | ✅ | - | 搜索历史记忆 |
 
@@ -851,8 +851,8 @@ class AgentTool(Tool):
         "task": {"type": "string", "description": "Task for the sub-agent"},
         "agent_type": {
             "type": "string",
-            "enum": ["explore", "general", "worktree", "team"],
-            "description": "explore=只读搜索 | general=全部工具 | worktree=git隔离 | team=多角色并行",
+            "enum": ["explore", "general", "team"],
+            "description": "explore=只读搜索 | general=全部工具 | team=多角色并行",
         },
     }
     is_concurrency_safe = True
@@ -1229,7 +1229,7 @@ class SessionStore:
 
 ```
 目标: 多 Agent 协作 + Web/TodoWrite 工具
-- capabilities/multi_agent.py — AgentTool 统一路由（explore/general/worktree/team）
+- capabilities/multi_agent.py — AgentTool 统一路由（explore/general/team）
 - core/tools/web.py           — WebFetch, WebSearch
 - core/tools/task.py          — TodoWrite
 ```
@@ -1260,7 +1260,7 @@ class SessionStore:
 | 记忆系统 | CLAUDE.md + Hook + 压缩摘要 | CLAUDE.md + 压缩摘要 + n-gram 向量检索 | 自研 n-gram（ChromaDB 在 Windows 崩溃） |
 | 子 Agent 协作 | SendMessage + JSONL邮箱 + FSM | AgentTool 统一路由 | 单机不需要对等通信协议 |
 | 权限 | 7 层 + AST 分析 | 4 层 | 不需要 iOS/Android 沙箱、OS 级防护 |
-| Worktree 隔离 | Git worktree 并行 | worktree 模式（git 隔离，非 git 降级） | 简化版实现 |
+| Worktree 隔离 | Git worktree 并行 | 已移除 | cwd 隔离未实现，避免假隔离安全感 |
 | UI | React + Ink（终端框架） | Click CLI + print | 不做终端 UI 框架 |
 
 ## 附录 B: 面试核心论述

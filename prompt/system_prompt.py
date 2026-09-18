@@ -26,6 +26,7 @@ When the task is complete, provide a final answer without calling tools.
 - Search for relevant code before making changes
 - Run tests after making changes to verify correctness
 - Use the most specific tool for each task
+- Use the Remember tool to persist reusable patterns, fixes, and user preferences across sessions
 
 ## Safety Rules
 - Never execute destructive commands unless you understand the full impact

@@ -5,8 +5,8 @@ Core insight: Sub-agents reuse the same turn engine with different params.
 
 Collaboration modes:
 - explore / general: single sub-agent with toolset filter
-- worktree: git worktree isolation for parallel write tasks
 - team: coordinator decomposes task → parallel role sub-agents → merge
+- (worktree retired: cwd isolation not implemented, removed from the enum)
 """
 
 import asyncio
@@ -28,7 +28,7 @@ class AgentTool(Tool):
     description = (
         "Launch a sub-agent (or team of sub-agents) for independent work. "
         "agent_type: explore (read-only search) | general (full toolset) | "
-        "worktree (git-isolated parallel write) | team (coordinated roles)."
+        "team (coordinated roles)."
     )
     input_schema = {
         "task": {
@@ -37,15 +37,15 @@ class AgentTool(Tool):
         },
         "agent_type": {
             "type": "string",
-            "enum": ["explore", "general", "worktree", "team"],
-            "description": "explore | general | worktree | team",
+            "enum": ["explore", "general", "team"],
+            "description": "explore | general | team",
         },
     }
     is_concurrency_safe = True
 
     AGENT_PROFILES = {
         "explore": {
-            "tools_filter": ["Read", "Grep", "Glob"],
+            "tools_filter": ["Read", "RecallMemory"],
             "max_turns": 10,
             "system_prompt": (
                 "You are a code explorer. Find relevant code and report "
@@ -108,9 +108,10 @@ class AgentTool(Tool):
     async def _run_worktree(self, task: str) -> str:
         """Run a sub-agent in an isolated git worktree.
 
-        If the project is a git repo, create a worktree on a new branch,
-        run the sub-agent there, and report the diff. If not a git repo,
-        gracefully degrade to normal sub-agent execution.
+        RETIRED — removed from the agent_type enum. Worktree cwd isolation
+        is not implemented (sub-agents run in the parent working directory,
+        so this path gives a false sense of isolation). Kept only for
+        reference; not reachable via normal tool invocation.
         """
         if not self._is_git_repo():
             return (

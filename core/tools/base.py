@@ -137,3 +137,60 @@ class RecallMemoryTool(Tool):
                 f"  Tags: {', '.join(e.tags)}"
             )
         return "\n".join(lines)
+
+
+class RememberTool(Tool):
+    """Persist knowledge to long-term memory across sessions.
+
+    Complements RecallMemoryTool (read) with an explicit write path.
+    The model calls this to save a reusable pattern (procedural), an
+    event (episodic), or a user preference (user_profile).
+    """
+
+    name = "Remember"
+    description = (
+        "Persist knowledge to long-term memory for future sessions. "
+        "memory_type: procedural (how to do X) | episodic (what happened) "
+        "| user_profile (a user preference)."
+    )
+    input_schema = {
+        "memory_type": {
+            "type": "string",
+            "enum": ["procedural", "episodic", "user_profile"],
+            "description": "Which memory category to write to",
+        },
+        "content": {
+            "type": "string",
+            "description": "The knowledge / value to remember",
+        },
+        "key": {
+            "type": "string",
+            "description": "Required for user_profile: the preference key "
+                           "(e.g. 'naming_style')",
+        },
+    }
+    is_readonly = False
+    is_concurrency_safe = True
+
+    def __init__(self, memory_manager=None):
+        super().__init__()
+        self._memory = memory_manager
+
+    async def execute(self, memory_type: str, content: str,
+                      key: str | None = None) -> str:
+        if self._memory is None:
+            return "Memory system not initialized."
+        try:
+            if memory_type == "procedural":
+                await self._memory.record_procedural(content)
+            elif memory_type == "episodic":
+                await self._memory.record_episodic(content)
+            elif memory_type == "user_profile":
+                if not key:
+                    return "Error: 'key' is required for user_profile memory."
+                await self._memory.record_user_profile(key, content)
+            else:
+                return f"Error: unknown memory_type '{memory_type}'"
+        except Exception as e:
+            return f"Failed to record memory: {e}"
+        return f"Recorded [{memory_type}] memory."

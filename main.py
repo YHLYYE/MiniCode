@@ -25,9 +25,7 @@ from core.agent_loop import (
 )
 from core.tools.files import ReadTool, WriteTool
 from core.tools.shell import BashTool
-from core.tools.web import WebFetchTool, WebSearchTool
-from core.tools.task import TodoWriteTool
-from core.tools.base import SkillTool, RecallMemoryTool
+from core.tools.base import SkillTool, RecallMemoryTool, RememberTool
 from capabilities.skill import SkillSystem
 from capabilities.memory import MemoryManager
 from capabilities.multi_agent import AgentTool
@@ -36,40 +34,38 @@ from prompt.system_prompt import build_system_prompt
 from session_store import SessionStore
 
 
-def _build_tools(mode: str):
-    """Initialize subsystems and return (tools, system_prompt, extra_loop_kwargs).
-
-    extra_loop_kwargs 包含需要注入 AgentLoop 的回调（写文件编辑记录回调、
-    skill 激活追踪回调）。这样工具层不需要直接持有 compressor / loop。
-    """
+def _build_tools(mode: str, config: Config):
+    """Initialize subsystems and return (tools, system_prompt, exec_mode, memory_manager)."""
     skill_system = SkillSystem()
     skill_system.register_from_source(Path("skills/"), priority=10)
     memory_manager = MemoryManager()
 
-    # 9 个工具：Read/Write/Bash + Web/WebSearch/TodoWrite
-    #         + Skill + RecallMemory + Agent
-    # 先实例化，等下构造 AgentTool 时需要 tool_registry 的引用
-    read = ReadTool()
-    write = WriteTool()
-    bash = BashTool()
-    web_fetch = WebFetchTool()
-    web_search = WebSearchTool()
-    todo_write = TodoWriteTool()
-    skill_tool = SkillTool(skill_system)
-    recall = RecallMemoryTool(memory_manager)
+    def _agent_factory(tools, system_prompt, max_turns):
+        """Spawn a sub-agent sharing the parent's model and memory store."""
+        return AgentLoop(
+            tools=tools,
+            model_adapter=ModelAdapter(config.model),
+            system_prompt=system_prompt,
+            max_turns=max_turns,
+            max_cost_usd=config.max_cost_usd,
+            memory_manager=memory_manager,  # project-scoped memory sharing
+        )
 
-    base_list = [read, write, bash, web_fetch, web_search, todo_write,
-                 skill_tool, recall]
-    tool_registry = {t.name: t for t in base_list}
+    base_tools = [
+        ReadTool(), WriteTool(), BashTool(),
+        SkillTool(skill_system),
+        RecallMemoryTool(memory_manager),
+        RememberTool(memory_manager),
+    ]
 
-    # AgentTool：agent_factory 由调用方在 _make_loop 里闭包注入
-    # （因为构造 AgentLoop 需要 model_adapter，此时还没 build config）
+    # Sub-agents get the base toolset only (no Agent → no unbounded recursion).
     agent_tool = AgentTool(
-        agent_loop_factory=None,          # — 稍后在 main() 中 patch
-        tool_registry=tool_registry,      # — 子 Agent 可用的工具全集
+        agent_loop_factory=_agent_factory,
+        tool_registry={t.name: t for t in base_tools},
         project_root=Path.cwd(),
     )
-    all_tools = base_list + [agent_tool]
+
+    all_tools = base_tools + [agent_tool]
 
     exec_mode = ExecutionMode.PLAN if mode == "plan" else ExecutionMode.NORMAL
     tools = resolve_tools_for_mode(all_tools, exec_mode)
@@ -78,7 +74,7 @@ def _build_tools(mode: str):
         skill_index=skill_system.get_index_for_system_prompt(),
         claude_md=memory_manager.load_claude_md(),
     )
-    return tools, system_prompt, exec_mode, skill_system, memory_manager
+    return tools, system_prompt, exec_mode, memory_manager
 
 
 @click.command()
@@ -112,24 +108,7 @@ def main(task: str | None, mode: str, max_turns: int, max_cost: float,
                 print(f"  {sid}")
         return
 
-    tools, system_prompt, exec_mode, skill_system, memory_manager = _build_tools(mode)
-
-    def agent_factory(**kwargs):
-        """给 AgentTool 用的 factory：复用 _make_loop 的构造逻辑，
-        但允许子 Agent 覆盖 tools/system_prompt/max_turns。"""
-        return AgentLoop(
-            tools=kwargs.get("tools", tools),
-            model_adapter=ModelAdapter(config.model),
-            system_prompt=kwargs.get("system_prompt", system_prompt),
-            max_turns=kwargs.get("max_turns", max_turns),
-            max_cost_usd=1.0,  # 子 Agent 独立预算保护
-        )
-
-    # 把 factory 注入 AgentTool（tools 列表里找 Agent 实例）
-    for t in tools:
-        if isinstance(t, AgentTool):
-            t._agent_factory = agent_factory
-            break
+    tools, system_prompt, exec_mode, memory_manager = _build_tools(mode, config)
 
     # --resume: 加载历史会话
     resume_state = None
@@ -143,7 +122,8 @@ def main(task: str | None, mode: str, max_turns: int, max_cost: float,
     if task:
         # 单次任务模式
         _print_header(config, mode, max_turns, max_cost)
-        loop = _make_loop(config, tools, system_prompt, max_turns, max_cost)
+        loop = _make_loop(config, tools, system_prompt, max_turns, max_cost,
+                          memory_manager)
         if resume_state:
             loop._state = resume_state
         print(f"> {task}\n")
@@ -153,16 +133,18 @@ def main(task: str | None, mode: str, max_turns: int, max_cost: float,
     else:
         # 交互式 REPL 模式
         asyncio.run(_interactive_repl(config, tools, system_prompt, exec_mode,
-                                      store, resume_state))
+                                      store, resume_state, memory_manager))
 
 
-def _make_loop(config, tools, system_prompt, max_turns, max_cost):
+def _make_loop(config, tools, system_prompt, max_turns, max_cost,
+               memory_manager=None):
     return AgentLoop(
         tools=tools,
         model_adapter=ModelAdapter(config.model),
         system_prompt=system_prompt,
         max_turns=max_turns,
         max_cost_usd=max_cost,
+        memory_manager=memory_manager,
     )
 
 
@@ -175,7 +157,7 @@ def _print_header(config, mode, max_turns, max_cost):
 
 async def _interactive_repl(config, tools, system_prompt, exec_mode,
                             store: SessionStore | None = None,
-                            resume_state=None):
+                            resume_state=None, memory_manager=None):
     """交互式 REPL — 启动一次，连续对话，上下文持续。"""
     print("=" * 60)
     print("MiniCode 交互模式")
@@ -184,7 +166,8 @@ async def _interactive_repl(config, tools, system_prompt, exec_mode,
     print("命令: /clear 清空 | /save 保存 | /list 会话 | /exit 退出 | /help 帮助")
     print("=" * 60)
 
-    loop = _make_loop(config, tools, system_prompt, config.max_turns, config.max_cost_usd)
+    loop = _make_loop(config, tools, system_prompt, config.max_turns,
+                      config.max_cost_usd, memory_manager)
     if resume_state:
         loop._state = resume_state
 
@@ -208,7 +191,8 @@ async def _interactive_repl(config, tools, system_prompt, exec_mode,
             return
         if cmd in ("/clear", "/reset"):
             loop = _make_loop(config, tools, system_prompt,
-                              config.max_turns, config.max_cost_usd)
+                              config.max_turns, config.max_cost_usd,
+                              memory_manager)
             print("[已清空对话历史]")
             continue
         if cmd in ("/save", "/s"):

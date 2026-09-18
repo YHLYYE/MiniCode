@@ -19,7 +19,7 @@ A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill 
 | 3 | **Skill Progressive Disclosure + 2-stage Routing** | System Prompt stays constant → Prefix Cache structure naturally stable. Recall → Rank for >10 skills |
 | 4 | **3-tier Memory (procedural / episodic / profile)** | Pluggable `MemoryStore` backend, pure-Python n-gram vector search (no ChromaDB crash on Windows) |
 | 5 | **4-tier Context Compression** | Truncation → Snip → Collapse → Autocompact. **Snip 86% / Collapse 95% / Autocompact 99.95% compression ratio**. End-to-end Token cost **reduced 74.8%** |
-| 6 | **Multi-Agent (AgentTool)** | explore / general / worktree / team modes. Child agents get isolated contexts, only return summaries. Semaphore(5) concurrency cap |
+| 6 | **Multi-Agent (AgentTool)** | explore / general / team modes. Child agents get isolated contexts, only return summaries. Semaphore(5) concurrency cap |
 | 7 | **4-layer Security + Plan/Normal Dual Mode** | Rule filter → Tool self-check → AI risk classifier → Human confirmation. Plan mode physically removes write tools |
 
 ---
@@ -99,17 +99,19 @@ python main.py --mode plan "Refactor utils"  # Plan mode (read-only)
 python main.py --max-turns 30 --max-cost 10.0
 ```
 
-### Available Tools (9)
+### Available Tools (7)
 
 | Tool | Description |
 |------|-------------|
 | `Read` / `Write` | File I/O via pluggable `FilesystemBackend` |
 | `Bash` | Shell execution with permission review |
-| `WebFetch` / `WebSearch` | Internet access |
-| `TodoWrite` | Structured task planning |
 | `Skill` | Progressive skill activation |
 | `RecallMemory` | Cross-session experience retrieval |
-| `Agent` | Sub-agent delegation (explore / general / worktree / team) |
+| `Remember` | Persist knowledge to long-term memory |
+| `Agent` | Sub-agent delegation (explore / general / team) |
+
+> `WebFetch` / `WebSearch` / `TodoWrite` 定义于 `core/tools/`，但未接入
+> `main.py` 的工具集；`Agent` 的 `worktree` 模式已移除（cwd 隔离未实现）。
 
 ### Execution Modes
 
@@ -146,7 +148,7 @@ minicode/
 ├── capabilities/               # High-level agent features
 │   ├── skill.py                # SkillSystem + progressive disclosure + routing
 │   ├── memory.py               # MemoryManager + 3-type MemoryStore
-│   ├── multi_agent.py          # AgentTool + team/worktree/explore modes
+│   ├── multi_agent.py          # AgentTool + team/explore modes
 │   ├── security.py             # 4-layer permission review
 │   └── compression.py          # 4-tier context compressor
 │

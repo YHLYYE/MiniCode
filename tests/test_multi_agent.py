@@ -5,10 +5,10 @@ from capabilities.multi_agent import AgentTool
 
 
 def test_agent_type_enum():
-    """agent_type 支持四种模式"""
+    """agent_type 支持三种模式"""
     at = AgentTool()
     assert list(at.input_schema["agent_type"]["enum"]) == [
-        "explore", "general", "worktree", "team"
+        "explore", "general", "team"
     ]
 
 

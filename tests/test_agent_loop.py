@@ -8,6 +8,7 @@ from core.state import (
     BudgetExceeded,
 )
 from core.tools.base import Tool, ToolCall
+from capabilities.memory import MemoryManager, MemoryType
 
 
 # ── Mock Tool ──
@@ -323,3 +324,96 @@ async def test_budget_exceeded():
     with pytest.raises(BudgetExceeded):
         async for event in loop.run("Expensive task"):
             pass
+
+
+# ── Memory write-loop integration tests ──
+
+@pytest.mark.asyncio
+async def test_memory_records_task_completion(tmp_path):
+    """Task DoneEvent persists a completion event to episodic memory."""
+    mm = MemoryManager(project_root=tmp_path)
+    mock = MockModelAdapter([[make_text("All done."), make_stop("end_turn")]])
+
+    loop = AgentLoop(
+        tools=[MockTool()],
+        model_adapter=mock,
+        system_prompt="Test.",
+        memory_manager=mm,
+    )
+    async for _ in loop.run("Do a thing"):
+        pass
+
+    results = await mm.search("Do a thing", memory_type=MemoryType.EPISODIC)
+    assert any("Task:" in e.content for e in results), [e.content for e in results]
+
+
+@pytest.mark.asyncio
+async def test_memory_records_tool_error(tmp_path):
+    """Tool errors are persisted to episodic memory during recovery."""
+    class FailingTool(Tool):
+        name = "failing_tool"
+        description = "Always fails"
+        input_schema = {"arg": {"type": "string"}}
+        is_readonly = True
+        async def execute(self, arg: str) -> str:
+            raise RuntimeError("distinctive_boom_xyz")
+
+    mm = MemoryManager(project_root=tmp_path)
+    mock = MockModelAdapter([
+        [make_tool_use("failing_tool", {"arg": "x"}), make_stop("end_turn")],
+        [make_text("Alternative."), make_stop("end_turn")],
+    ])
+
+    loop = AgentLoop(
+        tools=[FailingTool()],
+        model_adapter=mock,
+        system_prompt="Test.",
+        memory_manager=mm,
+    )
+    async for _ in loop.run("test"):
+        pass
+
+    results = await mm.search("distinctive_boom_xyz",
+                              memory_type=MemoryType.EPISODIC)
+    assert any("distinctive_boom_xyz" in e.content for e in results), \
+        [e.content for e in results]
+
+
+@pytest.mark.asyncio
+async def test_memory_records_file_edit(tmp_path):
+    """Successful Write persists a file-edit event to episodic memory."""
+    from pathlib import Path
+
+    class WriteMockTool(Tool):
+        name = "Write"
+        description = "Mock write"
+        input_schema = {
+            "file_path": {"type": "string"},
+            "content": {"type": "string"},
+        }
+        is_readonly = False
+        async def execute(self, file_path: str, content: str) -> str:
+            return f"Created {file_path} ({len(content)} chars)"
+
+    # Path must be inside cwd to pass the security path allowlist
+    file_path = str(Path.cwd() / "memtest_unique_xyz.py")
+
+    mm = MemoryManager(project_root=tmp_path)
+    mock = MockModelAdapter([
+        [make_tool_use("Write", {"file_path": file_path, "content": "x=1"}),
+         make_stop("end_turn")],
+        [make_text("Done."), make_stop("end_turn")],
+    ])
+
+    loop = AgentLoop(
+        tools=[WriteMockTool()],
+        model_adapter=mock,
+        system_prompt="Test.",
+        memory_manager=mm,
+    )
+    async for _ in loop.run("edit file"):
+        pass
+
+    results = await mm.search("memtest_unique_xyz",
+                              memory_type=MemoryType.EPISODIC)
+    assert any("Edited" in e.content for e in results), [e.content for e in results]

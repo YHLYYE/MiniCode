@@ -1,7 +1,9 @@
 """三种记忆分类测试 — 程序性/情景/用户画像"""
 import pytest
 import asyncio
-from capabilities.memory import MemoryManager, MemoryType, MemoryEntry
+from capabilities.memory import (
+    MemoryManager, MemoryType, MemoryEntry, JSONMemoryStore, SQLiteMemoryStore,
+)
 
 
 @pytest.fixture
@@ -85,3 +87,82 @@ def test_procedural_keyword_search(memory_manager):
     results = asyncio.run(run())
     assert len(results) >= 1
     assert any("NPE" in r.content for r in results)
+
+
+def test_sqlite_store_persistence(tmp_path):
+    """SQLite 后端跨 MemoryManager 实例持久化"""
+    async def run():
+        mm1 = MemoryManager(project_root=tmp_path)
+        await mm1.record_procedural("sqlite persistence check pattern")
+        mm2 = MemoryManager(project_root=tmp_path)
+        return await mm2.search("sqlite persistence",
+                                memory_type=MemoryType.PROCEDURAL)
+
+    results = asyncio.run(run())
+    assert any("sqlite persistence" in e.content for e in results)
+
+
+def test_json_store_backend_still_works(tmp_path):
+    """JSON 后端仍可作为显式 store 使用"""
+    async def run():
+        mm = MemoryManager(project_root=tmp_path,
+                           store=JSONMemoryStore(tmp_path / "memories"))
+        await mm.record_procedural("json backend pattern")
+        return await mm.search("json backend",
+                               memory_type=MemoryType.PROCEDURAL)
+
+    results = asyncio.run(run())
+    assert any("json backend" in e.content for e in results)
+
+
+def test_sqlite_store_prunes_old_entries(tmp_path):
+    """SQLite 后端按类型裁剪超出 max_entries 的旧条目"""
+    store = SQLiteMemoryStore(tmp_path / "mem.sqlite", max_entries=5)
+    mm = MemoryManager(project_root=tmp_path, store=store)
+
+    async def run():
+        for i in range(10):
+            await mm.record_procedural(f"pattern number {i}")
+        return await mm.search("pattern number",
+                               memory_type=MemoryType.PROCEDURAL, top_k=100)
+
+    results = asyncio.run(run())
+    assert len(results) == 5
+
+
+def test_procedural_search_strips_punctuation(tmp_path):
+    """检索能匹配带标点的记忆（此前 'NPE:' 分词后匹配不到 'NPE'）"""
+    mm = MemoryManager(project_root=tmp_path)
+
+    async def run():
+        await mm.record_procedural("fix NPE: null-check before deref")
+        return await mm.search("NPE", memory_type=MemoryType.PROCEDURAL)
+
+    results = asyncio.run(run())
+    assert any("NPE" in e.content for e in results)
+
+
+def test_successful_memory_ranks_above_failed(tmp_path):
+    """成功经验排在失败尝试之前"""
+    mm = MemoryManager(project_root=tmp_path)
+
+    async def run():
+        await mm.record_episodic("deploy strategy X", success=False)
+        await mm.record_episodic("deploy strategy X", success=True)
+        return await mm.search("deploy strategy", memory_type=MemoryType.EPISODIC)
+
+    results = asyncio.run(run())
+    assert len(results) >= 2
+    assert results[0].success is True
+
+
+def test_chinese_content_is_searchable(tmp_path):
+    """中文内容在归一化后仍可检索（Unicode 感知分词）"""
+    mm = MemoryManager(project_root=tmp_path)
+
+    async def run():
+        await mm.record_episodic("修复了空指针异常的 bug")
+        return await mm.search("空指针", memory_type=MemoryType.EPISODIC)
+
+    results = asyncio.run(run())
+    assert any("空指针" in e.content for e in results)

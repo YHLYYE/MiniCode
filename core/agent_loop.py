@@ -16,6 +16,7 @@ from core.state import (
 from core.model_adapter import ModelAdapter, StreamChunk, Usage
 from core.tools.base import Tool, ToolCall
 from capabilities.compression import ContextCompressor
+from capabilities.memory import MemoryManager
 from capabilities.security import PermissionManager, SecurityBlock
 
 
@@ -40,6 +41,7 @@ class AgentLoop:
         system_prompt: str,
         max_turns: int = 20,
         max_cost_usd: float = 5.0,
+        memory_manager: MemoryManager | None = None,
     ):
         self._tools = {t.name: t for t in tools}
         self._model = model_adapter
@@ -47,6 +49,8 @@ class AgentLoop:
         self._max_turns = max_turns
         self._max_cost_usd = max_cost_usd
         self._state: LoopState | None = None
+        self._current_task: str | None = None
+        self._memory = memory_manager
         self._compressor = ContextCompressor()
         self._permission = PermissionManager(model=model_adapter)
 
@@ -62,6 +66,7 @@ class AgentLoop:
             resume_state: Optional state to continue from (defaults to self._state,
                           enabling multi-task conversation in the same loop)
         """
+        self._current_task = task
         if resume_state:
             state = resume_state
         elif self._state is not None and self._state.messages:
@@ -157,6 +162,7 @@ class AgentLoop:
             if stop_reason in ("length", "max_tokens"):
                 handled = await self._handle_max_tokens()
                 if not handled:
+                    await self._record_task_done("terminated: max_tokens")
                     yield DoneEvent(self._state)
                     return
                 continue
@@ -178,6 +184,7 @@ class AgentLoop:
             # ── 5. No tool calls → task complete ──
             if not tool_calls and assistant_text:
                 self._state = self._state.with_transition(None)
+                await self._record_task_done(assistant_text[:300])
                 yield DoneEvent(self._state)
                 return
 
@@ -221,6 +228,10 @@ class AgentLoop:
                         # 结果前缀 "Created" 或 "Updated" 才视为成功写入
                         if result.startswith(("Created ", "Updated ")):
                             self._compressor.record_edit(file_path, content)
+                            if self._memory is not None:
+                                await self._memory.record_file_edit(
+                                    file_path, "", ""
+                                )
 
                 self._state = self._state.add_message(
                     Message(role="tool", content=result, tool_call_id=tool_call_id)
@@ -231,6 +242,11 @@ class AgentLoop:
                 error_lines = "\n".join(
                     f"- {e.tool_name}: {e.error}" for e in tool_errors
                 )
+                if self._memory is not None:
+                    await self._memory.record_episodic(
+                        f"Tool errors:\n{error_lines[:500]}",
+                        tags=["error"],
+                    )
                 recovery_msg = Message(
                     role="user",
                     content=(
@@ -247,6 +263,7 @@ class AgentLoop:
             self._state = self._state.with_transition(ContinueReason.NEXT_TURN)
 
         # Max turns reached
+        await self._record_task_done("terminated: max_turns")
         yield DoneEvent(self._state)
 
     async def _handle_max_tokens(self) -> bool:
@@ -289,6 +306,22 @@ class AgentLoop:
 
         # Tier 3: give up
         return False
+
+    async def _record_task_done(self, note: str = "") -> None:
+        """Persist a task-completion event to episodic memory.
+
+        Called at every DoneEvent site so memory holds a session-level
+        trace of what happened, not just isolated tool events.
+        """
+        if self._memory is None:
+            return
+        task = self._current_task or "(unnamed task)"
+        suffix = f"\n{note}" if note else ""
+        await self._memory.record_episodic(
+            f"Task: {task} | {self._state.turn_count} turns | "
+            f"{self._state.total_tokens} tokens{suffix}",
+            tags=["task_summary"],
+        )
 
     def _is_prompt_too_long(self, error: Exception) -> bool:
         """Detect whether an API error indicates context overflow."""
