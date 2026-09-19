@@ -3,11 +3,7 @@ import asyncio
 import re
 from pathlib import Path
 from core.tools.base import Tool
-
-
-class SecurityBlock(Exception):
-    """Raised when a command is blocked by security rules"""
-    pass
+from capabilities.security import SecurityBlock
 
 
 class BashTool(Tool):

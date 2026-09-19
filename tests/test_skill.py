@@ -77,3 +77,51 @@ def test_route_returns_skills_and_scores(skill_system):
         assert isinstance(skill, Skill)
         assert isinstance(score, float)
         assert 0.0 <= score <= 1.0
+
+
+def test_real_skills_load_and_route():
+    """真实 skills/ 目录下的 skill 能被加载，且 route() 路由到正确技能"""
+    import pathlib
+
+    skills_dir = pathlib.Path(__file__).parent.parent / "skills"
+    ss = SkillSystem()
+    ss.register_from_source(skills_dir, priority=10)
+
+    names = set(ss.list_skills())
+    assert {
+        "code-review", "write-tests", "debug",
+        "refactor", "documentation", "security-audit",
+    } <= names
+
+    cases = [
+        ("review this code for bugs", "code-review"),
+        ("write unit tests for this function", "write-tests"),
+        ("why is this test failing", "debug"),
+        ("refactor this function to be cleaner", "refactor"),
+        ("document this module with docstrings", "documentation"),
+        ("find security vulnerabilities here", "security-audit"),
+    ]
+    for task, expected in cases:
+        results = ss.route(task, top_k=1)
+        assert results, f"route('{task}') 应命中 {expected}"
+        assert results[0][0].name == expected, (
+            f"route('{task}') 命中 {results[0][0].name}，期望 {expected}"
+        )
+
+
+def test_skill_tool_fuzzy_match():
+    """Skill 名未精确命中时，SkillTool 用 route() 推荐最接近的 skill"""
+    import asyncio
+    import pathlib
+
+    from core.tools.base import SkillTool
+
+    skills_dir = pathlib.Path(__file__).parent.parent / "skills"
+    ss = SkillSystem()
+    ss.register_from_source(skills_dir, priority=10)
+    tool = SkillTool(ss)
+
+    # 空格写法 → 精确名 "code review" 未命中 → 走 route() 模糊匹配
+    result = asyncio.run(tool.execute("code review"))
+    assert "not found" in result
+    assert "code-review" in result

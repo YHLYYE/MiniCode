@@ -11,13 +11,17 @@ from typing import AsyncIterator
 from core.state import (
     Message, LoopState, ContinueReason,
     TextDelta, ToolStart, ToolResult, ToolError, DoneEvent,
-    BudgetExceeded, UnrecoverableError,
+    BudgetExceeded,
 )
 from core.model_adapter import ModelAdapter, StreamChunk, Usage
 from core.tools.base import Tool, ToolCall
 from capabilities.compression import ContextCompressor
 from capabilities.memory import MemoryManager
 from capabilities.security import PermissionManager, SecurityBlock
+
+
+# ── Tool result truncation ──
+MAX_RESULT_CHARS = 30_000  # 单条工具结果超过此值则截断（防上下文暴涨）
 
 
 # ── Agent Loop ──
@@ -201,6 +205,14 @@ class AgentLoop:
                         tc = ToolCall(tool_name, tool_input)
                         await self._permission.authorize(tc)
                         result = await tool.execute(**tool_input)
+                        # 截断超长结果，防止单条工具输出塞爆上下文
+                        if len(result) > MAX_RESULT_CHARS:
+                            original = len(result)
+                            result = (
+                                result[:MAX_RESULT_CHARS - 1000]
+                                + f"\n...[省略 {original - MAX_RESULT_CHARS} 字符]...\n"
+                                + result[-500:]
+                            )
                         yield ToolResult(tool_name, result)
                     except SecurityBlock as e:
                         result = f"Security blocked: {e}"

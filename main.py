@@ -25,6 +25,7 @@ from core.agent_loop import (
 )
 from core.tools.files import ReadTool, WriteTool
 from core.tools.shell import BashTool
+from core.tools.task import TodoWriteTool
 from core.tools.base import SkillTool, RecallMemoryTool, RememberTool
 from capabilities.skill import SkillSystem
 from capabilities.memory import MemoryManager
@@ -52,7 +53,7 @@ def _build_tools(mode: str, config: Config):
         )
 
     base_tools = [
-        ReadTool(), WriteTool(), BashTool(),
+        ReadTool(), WriteTool(), BashTool(), TodoWriteTool(),
         SkillTool(skill_system),
         RecallMemoryTool(memory_manager),
         RememberTool(memory_manager),

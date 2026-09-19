@@ -80,7 +80,3 @@ class DoneEvent:
 
 class BudgetExceeded(Exception):
     pass
-
-
-class UnrecoverableError(Exception):
-    pass

@@ -80,6 +80,16 @@ class SkillTool(Tool):
             return "Skill system not initialized."
         instructions = self._skills.activate(name)
         if instructions is None:
+            # 精确名未命中 → 用二阶段路由模糊匹配，推荐最接近的 skill
+            suggestions = self._skills.route(name, top_k=3)
+            if suggestions:
+                lines = [f"Skill '{name}' not found. Closest matches:"]
+                for skill, confidence in suggestions:
+                    lines.append(
+                        f"  - {skill.name} (置信度 {confidence:.2f}): "
+                        f"{skill.description}"
+                    )
+                return "\n".join(lines)
             available = ", ".join(self._skills.list_skills())
             return (
                 f"Skill '{name}' not found.\n"

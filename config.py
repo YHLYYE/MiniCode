@@ -1,16 +1,13 @@
 """MiniCode configuration management"""
 import os
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 
 
 @dataclass
 class Config:
     model: str = "claude-sonnet-4-6"
     max_turns: int = 20
-    max_output_tokens: int = 8192
     max_cost_usd: float = 5.0
-    project_root: Path = field(default_factory=Path.cwd)
 
     @classmethod
     def from_env(cls) -> "Config":
