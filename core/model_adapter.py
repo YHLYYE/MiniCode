@@ -162,6 +162,15 @@ class ModelAdapter:
 
         response = await litellm.acompletion(**kwargs)
         async for chunk in response:
+            # 3. Usage — 必须在 choices 检查之前捕获：
+            #    include_usage 的最终 chunk 是 choices=[] 但带 usage，
+            #    若先 `if not chunk.choices: continue` 会把用量丢掉（计费归零）。
+            if getattr(chunk, "usage", None):
+                usage_data = {
+                    "input_tokens": chunk.usage.prompt_tokens or 0,
+                    "output_tokens": chunk.usage.completion_tokens or 0,
+                }
+
             if not chunk.choices:
                 continue
             delta = chunk.choices[0].delta
@@ -184,14 +193,9 @@ class ModelAdapter:
                     if tc.function and tc.function.arguments:
                         entry["args"] += tc.function.arguments
 
-            # 3. Finish reason + usage (final chunk)
+            # 3. Finish reason (final non-empty chunk)
             if chunk.choices[0].finish_reason:
                 finish_reason = chunk.choices[0].finish_reason
-            if getattr(chunk, "usage", None):
-                usage_data = {
-                    "input_tokens": chunk.usage.prompt_tokens or 0,
-                    "output_tokens": chunk.usage.completion_tokens or 0,
-                }
 
         # After stream: yield accumulated tool calls
         for idx, tc in accumulated_tool_calls.items():

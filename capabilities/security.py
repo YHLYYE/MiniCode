@@ -39,7 +39,7 @@ class RuleFilter:
     """
 
     DANGEROUS_PATTERNS: list[tuple[str, str]] = [
-        (r"rm\s+(-rf?|--recursive)", "recursive deletion"),
+        (r"rm\s+(-[a-z]*[rf][a-z]*|--recursive)", "recursive deletion"),
         (r"\bsudo\b", "privilege escalation"),
         (r"chmod\s+777", "overly permissive permissions"),
         (r"(curl|wget).*\|.*(sh|bash|python)", "remote script execution"),
@@ -48,6 +48,7 @@ class RuleFilter:
         (r"(DROP|TRUNCATE)\s+(TABLE|DATABASE)", "database destruction"),
         (r"\bmkfs\.", "filesystem format"),
         (r"dd\s+if=", "direct disk I/O"),
+        (r"(/proc/|/sys/)", "system filesystem access"),
     ]
 
     def __init__(self):
@@ -68,17 +69,18 @@ class RuleFilter:
                         f"Blocked ({reason}): {command[:100]}"
                     )
 
-        # Check file write paths
-        if tool_call.name in ("Write",):
-            file_path = Path(tool_call.input.get("file_path", ""))
-            allowed = any(
-                str(file_path).startswith(str(p))
+        # Check file paths (Read/Write): resolve symlinks/.. and confine to project
+        if tool_call.name in ("Read", "Write"):
+            raw = tool_call.input.get("file_path", "")
+            try:
+                resolved = Path(raw).resolve()
+            except (OSError, ValueError):
+                raise SecurityBlock(f"Invalid path: {raw}")
+            if not any(
+                resolved.is_relative_to(Path(p).resolve())
                 for p in self.path_allowlist
-            )
-            if not allowed:
-                raise SecurityBlock(
-                    f"Path outside project: {file_path}"
-                )
+            ):
+                raise SecurityBlock(f"Path outside project: {raw}")
 
 
 # ── L2: Tool Self-Check (< 5ms, synchronous) ──
@@ -126,7 +128,7 @@ class AIRiskClassifier:
 
     async def classify(self, tool_call: ToolCall) -> RiskLevel:
         if self._model is None:
-            return RiskLevel.MEDIUM
+            return RiskLevel.HIGH  # fail-closed：无分类器 → 视为高风险，交给人工
 
         prompt = f"""Analyze security risk. Output JSON only:
 {{"risk": "low|medium|high|critical", "reason": "..."}}
@@ -141,9 +143,13 @@ Input: {json.dumps(tool_call.input, indent=2)[:500]}"""
             )
             # Extract JSON robustly (model may wrap in markdown fences)
             data = self._extract_json(result)
-            return RiskLevel(data.get("risk", "medium"))
+            risk = str(data.get("risk", "high")).lower()
+            try:
+                return RiskLevel(risk)
+            except ValueError:
+                return RiskLevel.HIGH  # 非法风险值 → fail-closed
         except Exception:
-            return RiskLevel.MEDIUM
+            return RiskLevel.HIGH  # 分类器异常 → fail-closed
 
     @staticmethod
     def _extract_json(text: str) -> dict:

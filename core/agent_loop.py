@@ -23,6 +23,10 @@ from capabilities.security import PermissionManager, SecurityBlock
 # ── Tool result truncation ──
 MAX_RESULT_CHARS = 30_000  # 单条工具结果超过此值则截断（防上下文暴涨）
 
+# ── Stream retry (transient network errors) ──
+_STREAM_RETRY_MAX = 3           # 瞬态错误最大重试次数
+_STREAM_RETRY_BASE_DELAY = 1.0  # 指数退避基准延迟（秒）
+
 
 # ── Agent Loop ──
 
@@ -78,6 +82,9 @@ class AgentLoop:
             state = self._state.add_message(
                 Message(role="user", content=task)
             )
+            # 每个任务独立计数 turn，否则下一任务会继承上一任务的 turn_count
+            # 导致无 API 调用就 DoneEvent
+            state = state.with_field(turn_count=0)
         else:
             state = LoopState(
                 messages=(
@@ -93,6 +100,7 @@ class AgentLoop:
     async def _query_loop(self, state: LoopState):
         """Inner loop: per-turn execution with 5 recovery paths."""
         self._state = state
+        stream_retries = 0  # 本任务的流式中断重试计数（防反复断网死循环）
 
         while self._state.turn_count < self._max_turns:
             # Increment turn counter (LoopState is immutable → replace)
@@ -115,14 +123,10 @@ class AgentLoop:
                 messages_list.append(entry)
 
             # ── 2. Streaming API call ──
-            system_text = (
-                self._state.messages[0].content
-                if self._state.messages[0].role == "system"
-                else ""
-            )
+            # messages_list[0] 已是 system 消息，不再单独传 system=，
+            # 否则 system 提示词会发两次（token 成本翻倍）
             stream = self._model.chat_streaming(
                 messages=messages_list,
-                system=system_text,
                 tools=tool_schemas,
             )
 
@@ -152,7 +156,31 @@ class AgentLoop:
                         ContinueReason.PROMPT_TOO_LONG_RETRY
                     )
                     continue
+                # 瞬态错误（网络/超时/限流）→ 指数退避重试
+                if self._is_transient_error(e) and stream_retries < _STREAM_RETRY_MAX:
+                    stream_retries += 1
+                    # 半截输出已显示但未入状态 → 落盘 + 注入续写提示
+                    if assistant_text_parts:
+                        partial = "".join(assistant_text_parts)
+                        self._state = self._state.add_message(
+                            Message(role="assistant", content=partial)
+                        )
+                        self._state = self._state.add_message(Message(
+                            role="user",
+                            content=(
+                                "[你上一条回复因网络中断被截断，请从断点继续，"
+                                "不要重复已输出的内容。]"
+                            ),
+                        ))
+                    backoff = _STREAM_RETRY_BASE_DELAY * (2 ** (stream_retries - 1))
+                    await asyncio.sleep(backoff)
+                    self._state = self._state.with_transition(
+                        ContinueReason.NEXT_TURN
+                    )
+                    continue
                 raise
+            # 流式成功 → 重置连续失败计数（网络恢复后重新计数）
+            stream_retries = 0
 
             # ── 3. Track costs (fail-fast on budget) ──
             self._state = self._state.accumulate_usage(usage)
@@ -201,18 +229,20 @@ class AgentLoop:
                     yield ToolResult(tool_name, result)
                 else:
                     try:
-                        # Security check before execution
+                        # Security check before execution（fail-closed：False 拒绝执行）
                         tc = ToolCall(tool_name, tool_input)
-                        await self._permission.authorize(tc)
-                        result = await tool.execute(**tool_input)
-                        # 截断超长结果，防止单条工具输出塞爆上下文
-                        if len(result) > MAX_RESULT_CHARS:
-                            original = len(result)
-                            result = (
-                                result[:MAX_RESULT_CHARS - 1000]
-                                + f"\n...[省略 {original - MAX_RESULT_CHARS} 字符]...\n"
-                                + result[-500:]
-                            )
+                        if not await self._permission.authorize(tc):
+                            result = "Permission denied by user."
+                        else:
+                            result = await tool.execute(**tool_input)
+                            # 截断超长结果，防止单条工具输出塞爆上下文
+                            if len(result) > MAX_RESULT_CHARS:
+                                original = len(result)
+                                result = (
+                                    result[:MAX_RESULT_CHARS - 1000]
+                                    + f"\n...[省略 {original - MAX_RESULT_CHARS} 字符]...\n"
+                                    + result[-500:]
+                                )
                         yield ToolResult(tool_name, result)
                     except SecurityBlock as e:
                         result = f"Security blocked: {e}"
@@ -344,5 +374,17 @@ class AgentLoop:
                 "too long", "maximum context", "context length",
                 "prompt is too long", "context_window", "max tokens",
                 "400",  # OpenAI/DeepSeek return 400 for context overflow
+            )
+        )
+
+    def _is_transient_error(self, error: Exception) -> bool:
+        """Detect transient errors worth retrying (network/timeout/rate-limit)."""
+        msg = str(error).lower()
+        return any(
+            keyword in msg
+            for keyword in (
+                "connection", "reset", "timed out", "timeout", "temporary",
+                "unavailable", "rate limit", "broken pipe", "network",
+                "429", "500", "502", "503", "504",
             )
         )

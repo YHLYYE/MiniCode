@@ -34,6 +34,38 @@ def sha256(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+def _strip_orphaned_tool_calls(messages: tuple[Message, ...]) -> tuple[Message, ...]:
+    """压缩边界可能切断 assistant.tool_calls 与其 tool 结果的配对。
+
+    OpenAI/DeepSeek 要求：assistant 带 tool_calls 时，其后必须紧跟对应的
+    tool 消息（否则 API 400）。跨压缩边界时：
+    - assistant 的 tool 结果被压掉 → 去掉该 assistant 的 tool_calls
+    - tool 消息对应的 assistant 被压掉 → 丢掉该 tool 消息
+    """
+    tool_result_ids = {
+        m.tool_call_id for m in messages
+        if m.role == "tool" and m.tool_call_id
+    }
+    referenced_ids = {
+        tc.get("id")
+        for m in messages if m.role == "assistant" and m.tool_calls
+        for tc in m.tool_calls if tc.get("id")
+    }
+    out: list[Message] = []
+    for m in messages:
+        if m.role == "assistant" and m.tool_calls:
+            kept = [tc for tc in m.tool_calls if tc.get("id") in tool_result_ids]
+            out.append(Message(
+                role="assistant", content=m.content, tool_calls=kept or None,
+            ))
+        elif m.role == "tool":
+            if m.tool_call_id in referenced_ids:
+                out.append(m)
+        else:
+            out.append(m)
+    return tuple(out)
+
+
 class CompressionTier(Enum):
     NONE = 0
     TRUNCATION = 1
@@ -124,6 +156,7 @@ class ContextCompressor:
             new_messages[i] = Message(
                 role="tool",
                 content=f"[[snip:{key}]] ({len(msg.content)} chars — cached)",
+                tool_call_id=msg.tool_call_id,  # 保留配对，否则 API 400
             )
 
         return state.with_field(messages=tuple(new_messages))
@@ -153,7 +186,9 @@ class ContextCompressor:
             content=f"[Collapsed {len(middle)} messages]\n{summary}",
         )
 
-        return state.with_field(messages=head + (summary_msg,) + tail)
+        return state.with_field(
+            messages=_strip_orphaned_tool_calls(head + (summary_msg,) + tail)
+        )
 
     def _summarize_sync(self, messages: tuple[Message, ...]) -> str:
         """Generate a rule-based summary of conversation history.

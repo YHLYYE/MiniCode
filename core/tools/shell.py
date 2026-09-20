@@ -36,7 +36,7 @@ class BashTool(Tool):
     is_destructive = True
 
     DANGEROUS_PATTERNS: list[tuple[str, str]] = [
-        (r"rm\s+(-rf?|--recursive)", "Recursive deletion"),
+        (r"rm\s+(-[a-z]*[rf][a-z]*|--recursive)", "Recursive deletion"),
         (r"\bsudo\b", "Privilege escalation"),
         (r"chmod\s+777", "Overly permissive permissions"),
         (r"(curl|wget).*\|.*(sh|bash|python)", "Remote script piped execution"),
@@ -63,6 +63,7 @@ class BashTool(Tool):
         # L3: Working directory confinement
         cwd = Path.cwd()
 
+        proc = None
         try:
             proc = await asyncio.create_subprocess_shell(
                 command,
@@ -74,8 +75,15 @@ class BashTool(Tool):
                 proc.communicate(), timeout=timeout
             )
         except asyncio.TimeoutError:
+            # 取消 communicate 不会终止子进程 → 必须显式 kill，否则泄漏
+            if proc is not None:
+                proc.kill()
+                await proc.wait()
             return f"Command timed out after {timeout}s: {command[:100]}"
         except Exception as e:
+            if proc is not None:
+                proc.kill()
+                await proc.wait()
             return f"Command execution error: {e}"
 
         # Decode with system encoding first (Windows: GBK), then UTF-8
