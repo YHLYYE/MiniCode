@@ -86,10 +86,10 @@ class BashTool(Tool):
                 await proc.wait()
             return f"Command execution error: {e}"
 
-        # Decode with system encoding first (Windows: GBK), then UTF-8
+        # Decode with system locale encoding (Windows: GBK/cp936), then UTF-8
         import sys
         import locale
-        encoding = sys.getdefaultencoding() if sys.platform == "win32" else "utf-8"
+        encoding = locale.getpreferredencoding(False) if sys.platform == "win32" else "utf-8"
 
         def safe_decode(data: bytes) -> str:
             try:

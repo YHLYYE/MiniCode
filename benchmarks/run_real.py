@@ -16,6 +16,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+# 让脚本能 import 项目根目录的模块（config / main / core）
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from config import Config
 import main
 from core.state import TextDelta, ToolResult, DoneEvent
@@ -90,7 +93,7 @@ def save_report(result: dict) -> Path:
     return path
 
 
-def main():
+def cli():
     task = sys.argv[1] if len(sys.argv) > 1 else "列出当前目录下的文件"
     result = asyncio.run(run_task(task))
     path = save_report(result)
@@ -98,4 +101,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    cli()
