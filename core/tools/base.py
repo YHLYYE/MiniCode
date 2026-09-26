@@ -39,14 +39,25 @@ class Tool(ABC):
         return self.is_concurrency_safe
 
     def to_schema(self) -> dict:
-        """Convert tool to Anthropic-compatible JSON Schema"""
+        """Convert tool to Anthropic-compatible JSON Schema.
+
+        Only parameters WITHOUT a default in execute() are marked required
+        (带默认值的参数不应被强制要求).
+        """
+        import inspect
+        required = []
+        for name, param in inspect.signature(self.execute).parameters.items():
+            if name == "self":
+                continue
+            if param.default is inspect.Parameter.empty:
+                required.append(name)
         return {
             "name": self.name,
             "description": self.description,
             "input_schema": {
                 "type": "object",
                 "properties": self.input_schema,
-                "required": list(self.input_schema.keys()),
+                "required": required,
             },
         }
 

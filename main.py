@@ -24,8 +24,11 @@ from core.agent_loop import (
     AgentLoop, TextDelta, ToolStart, ToolResult, DoneEvent
 )
 from core.tools.files import ReadTool, WriteTool
+from core.tools.edit import EditTool
 from core.tools.shell import BashTool
 from core.tools.task import TodoWriteTool
+from core.tools.search import GrepTool, GlobTool
+from core.tools.web import WebSearchTool, WebFetchTool
 from core.tools.base import SkillTool, RecallMemoryTool, RememberTool
 from capabilities.skill import SkillSystem
 from capabilities.memory import MemoryManager
@@ -53,7 +56,8 @@ def _build_tools(mode: str, config: Config):
         )
 
     base_tools = [
-        ReadTool(), WriteTool(), BashTool(), TodoWriteTool(),
+        ReadTool(), WriteTool(), EditTool(), BashTool(), GrepTool(), GlobTool(),
+        WebSearchTool(), WebFetchTool(), TodoWriteTool(),
         SkillTool(skill_system),
         RecallMemoryTool(memory_manager),
         RememberTool(memory_manager),
@@ -63,7 +67,6 @@ def _build_tools(mode: str, config: Config):
     agent_tool = AgentTool(
         agent_loop_factory=_agent_factory,
         tool_registry={t.name: t for t in base_tools},
-        project_root=Path.cwd(),
     )
 
     all_tools = base_tools + [agent_tool]

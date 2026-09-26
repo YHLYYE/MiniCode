@@ -1,19 +1,19 @@
-"""Context compression — 4-tier degradation chain
+"""Context compression — 3-tier degradation chain.
 
-Reference: Claude Code's 4-level compression pipeline
-(how-claude-code-works ch03 — Truncation → Snip → Collapse → Autocompact)
+Reference: Claude Code's compression pipeline (how-claude-code-works ch03).
 
 Token usage thresholds:
-  50% → Truncation: single result > 30K chars → truncate + summary
   70% → Snip: large old tool outputs → placeholder replacement
   85% → Collapse: middle messages → structured summary
-  95% → Autocompact: fork sub-agent → full session summary (last resort)
+  95% → Autocompact: full session summary (last resort)
+
+Note: single-result truncation (Claude Code's 50% tier) is handled at tool
+execution in agent_loop.py via MAX_RESULT_CHARS, not in this compressor.
 """
 
 import hashlib
 import tiktoken
-from dataclasses import dataclass, field
-from enum import Enum
+from dataclasses import dataclass
 
 from core.state import LoopState, Message
 
@@ -66,18 +66,9 @@ def _strip_orphaned_tool_calls(messages: tuple[Message, ...]) -> tuple[Message, 
     return tuple(out)
 
 
-class CompressionTier(Enum):
-    NONE = 0
-    TRUNCATION = 1
-    SNIP = 2
-    COLLAPSE = 3
-    AUTOCOMPACT = 4
-
-
 @dataclass
 class CompressionConfig:
     max_context_tokens: int = 60_000  # DeepSeek V3 64K window, leave 4K margin
-    truncation_threshold: int = 30_000  # chars (single tool result)
     snip_threshold_ratio: float = 0.70
     collapse_threshold_ratio: float = 0.85
     autocompact_threshold_ratio: float = 0.95
@@ -141,8 +132,7 @@ class ContextCompressor:
         if tool_tokens / total < TOOL_RESULT_RATIO:
             return state
 
-        # Sort by content size descending, snip largest first
-        tool_entries.sort(key=lambda x: len(x[1].content), reverse=True)
+        # 保留最近 5 个工具结果，裁剪更早的（tool_entries 已按消息顺序排列）
         to_snip = (
             tool_entries[:-KEEP_RECENT]
             if len(tool_entries) > KEEP_RECENT

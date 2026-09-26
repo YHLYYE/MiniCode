@@ -38,13 +38,18 @@ def test_is_prompt_too_long_matches():
     assert loop._is_prompt_too_long(Exception("prompt is too long"))
     assert loop._is_prompt_too_long(Exception("maximum context length exceeded"))
     assert loop._is_prompt_too_long(Exception("context_window size"))
-    assert loop._is_prompt_too_long(Exception("Error code: 400"))
+    # 400 只有伴随上下文信号才算超长
+    assert loop._is_prompt_too_long(
+        Exception("Error code: 400 - maximum context length exceeded")
+    )
 
 
 def test_is_prompt_too_long_non_match():
     loop = _make_loop()
     assert not loop._is_prompt_too_long(Exception("some unrelated error"))
     assert not loop._is_prompt_too_long(Exception("division by zero"))
+    # 裸 400（无上下文信号）不应误判为超长
+    assert not loop._is_prompt_too_long(Exception("Error code: 400"))
 
 
 # ── _handle_max_tokens: three-tier escalation ──

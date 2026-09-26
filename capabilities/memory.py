@@ -22,6 +22,8 @@ violation). Replaced with a pure-Python character n-gram hashing vector +
 cosine similarity — no external model, zero native dependencies.
 """
 
+import asyncio
+import atexit
 import hashlib
 import json
 import re
@@ -352,6 +354,7 @@ class SQLiteMemoryStore(MemoryStore):
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._init_schema()
+        atexit.register(self.close)
 
     def _init_schema(self) -> None:
         with self._lock:
@@ -553,7 +556,7 @@ class MemoryManager:
             MemoryType.PROCEDURAL, pattern,
             context=context, tags=["procedural", "pattern"],
         )
-        self._store.add(entry)
+        await asyncio.to_thread(self._store.add, entry)
         return entry
 
     async def record_episodic(self, event: str, file_paths: list[str] | None = None,
@@ -564,7 +567,7 @@ class MemoryManager:
             file_paths=file_paths or [], tags=tags or ["episodic"],
             success=success,
         )
-        self._store.add(entry)
+        await asyncio.to_thread(self._store.add, entry)
         return entry
 
     async def record_user_profile(self, key: str, value: str) -> MemoryEntry:
@@ -572,7 +575,7 @@ class MemoryManager:
             MemoryType.USER_PROFILE, value,
             context=key, tags=["user_profile"],
         )
-        self._store.add(entry)
+        await asyncio.to_thread(self._store.add, entry)
         return entry
 
     # ── Backward-compatible convenience methods ──
@@ -592,7 +595,9 @@ class MemoryManager:
 
     async def search(self, query: str, top_k: int = 5,
                      memory_type: MemoryType | None = None) -> list[MemoryEntry]:
-        return self._store.search(memory_type, query, top_k)
+        return await asyncio.to_thread(
+            self._store.search, memory_type, query, top_k
+        )
 
     def close(self) -> None:
         """Release the underlying store's resources (e.g. SQLite connection)."""

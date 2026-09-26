@@ -5,6 +5,7 @@ Core principle: fail-closed defaults. Every tool defaults to requiring
 permission; security is layered so no single check is the sole gate.
 """
 
+import asyncio
 import json
 from dataclasses import dataclass
 from enum import Enum
@@ -69,8 +70,8 @@ class RuleFilter:
                         f"Blocked ({reason}): {command[:100]}"
                     )
 
-        # Check file paths (Read/Write): resolve symlinks/.. and confine to project
-        if tool_call.name in ("Read", "Write"):
+        # Check file paths (Read/Write/Edit): resolve symlinks/.. and confine to project
+        if tool_call.name in ("Read", "Write", "Edit"):
             raw = tool_call.input.get("file_path", "")
             try:
                 resolved = Path(raw).resolve()
@@ -215,8 +216,9 @@ Input: {json.dumps(tool_call.input, indent=2)[:300]}
 {'!' * 60}
 """)
         try:
-            response = input("Execute? [y/N]: ").strip().lower()
-            return response == "y"
+            # 同步 input() 会阻塞事件循环 → 丢线程池
+            response = await asyncio.to_thread(input, "Execute? [y/N]: ")
+            return response.strip().lower() == "y"
         except (EOFError, KeyboardInterrupt):
             return False
 

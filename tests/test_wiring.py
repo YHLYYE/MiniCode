@@ -8,12 +8,13 @@ from main import _build_tools
 
 
 def test_normal_mode_registers_all_tools(tmp_path, monkeypatch):
-    """normal 模式应注册全部 8 个工具"""
+    """normal 模式应注册全部 12 个工具"""
     monkeypatch.chdir(tmp_path)  # 避免在真实项目目录创建 .minicode
     tools, _, _, memory_manager = _build_tools("normal", Config())
     try:
         assert {t.name for t in tools} == {
-            "Read", "Write", "Bash", "TodoWrite",
+            "Read", "Write", "Edit", "Bash", "Grep", "Glob",
+            "WebSearch", "WebFetch", "TodoWrite",
             "Skill", "RecallMemory", "Remember", "Agent",
         }
     finally:
@@ -25,6 +26,9 @@ def test_plan_mode_keeps_only_readonly_tools(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     tools, _, _, memory_manager = _build_tools("plan", Config())
     try:
-        assert {t.name for t in tools} == {"Read", "Skill", "RecallMemory"}
+        assert {t.name for t in tools} == {
+            "Read", "Grep", "Glob", "WebSearch", "WebFetch",
+            "Skill", "RecallMemory",
+        }
     finally:
         memory_manager.close()

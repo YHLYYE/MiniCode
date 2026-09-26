@@ -192,6 +192,12 @@ class AgentLoop:
 
             # ── 3.5 Recovery: output token limit hit (finish_reason == "length") ──
             if stop_reason in ("length", "max_tokens"):
+                # 半截输出落盘（Tier 2 续写需要知道已输出的内容）
+                if assistant_text_parts:
+                    self._state = self._state.add_message(
+                        Message(role="assistant",
+                                content="".join(assistant_text_parts))
+                    )
                 handled = await self._handle_max_tokens()
                 if not handled:
                     await self._record_task_done("terminated: max_tokens")
@@ -368,14 +374,14 @@ class AgentLoop:
     def _is_prompt_too_long(self, error: Exception) -> bool:
         """Detect whether an API error indicates context overflow."""
         msg = str(error).lower()
-        return any(
-            keyword in msg
-            for keyword in (
-                "too long", "maximum context", "context length",
-                "prompt is too long", "context_window", "max tokens",
-                "400",  # OpenAI/DeepSeek return 400 for context overflow
-            )
+        context_kw = (
+            "too long", "maximum context", "context length",
+            "prompt is too long", "context_window", "max tokens",
         )
+        if any(k in msg for k in context_kw):
+            return True
+        # OpenAI/DeepSeek 上下文超限返回 400，但 400 也用于其他错误 → 需上下文信号
+        return "400" in msg and any(k in msg for k in ("context", "token", "length"))
 
     def _is_transient_error(self, error: Exception) -> bool:
         """Detect transient errors worth retrying (network/timeout/rate-limit)."""

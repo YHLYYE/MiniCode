@@ -1,6 +1,5 @@
-"""多 Agent 协作测试 — explore/general/worktree/team"""
+"""多 Agent 协作测试 — explore/general/team"""
 import pytest
-from pathlib import Path
 from capabilities.multi_agent import AgentTool
 
 
@@ -18,50 +17,13 @@ def test_team_roles():
     assert at.TEAM_ROLES == ["research", "coding", "testing"]
 
 
-def test_worktree_degrade_non_git(tmp_path):
-    """非 git 仓库时 worktree 降级为 general 模式"""
-    at = AgentTool(project_root=tmp_path)  # tmp_path 不是 git 仓库
-    assert not at._is_git_repo()
-
-
 def test_profiles_exist():
-    """四个 profile 都定义了"""
+    """两个 profile 都定义了（explore/general）"""
     at = AgentTool()
-    for key in ["explore", "general", "worktree"]:
+    for key in ["explore", "general"]:
         assert key in at.AGENT_PROFILES
     # team 用 TEAM_ROLES，不在 AGENT_PROFILES
     assert "team" not in at.AGENT_PROFILES
-
-
-@pytest.mark.asyncio
-async def test_worktree_degrade_message():
-    """非 git 仓库时 worktree 返回降级提示"""
-    # 用 mock factory，避免真实 API 调用
-    calls = []
-
-    def factory(tools, system_prompt, max_turns):
-        calls.append((tools, system_prompt, max_turns))
-
-        class FakeLoop:
-            async def run(self, task):
-                from core.state import TextDelta, DoneEvent, LoopState
-                yield TextDelta("degraded sub-agent output")
-                yield DoneEvent(LoopState(turn_count=1))
-
-        return FakeLoop()
-
-    at = AgentTool(
-        agent_loop_factory=factory,
-        tool_registry={},
-        project_root=Path(".") if not Path(".").is_absolute() else Path("."),
-    )
-
-    # 确保不是 git 仓库（Desktop/minicode 当前不是 git）
-    if not at._is_git_repo():
-        result = await at.execute("some task", agent_type="worktree")
-        assert "degraded" in result.lower() or "sub-agent" in result.lower()
-    else:
-        pytest.skip("当前是 git 仓库，跳过降级测试")
 
 
 @pytest.mark.asyncio

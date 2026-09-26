@@ -1,7 +1,7 @@
 ---
 name: code-review
 description: Review code changes for bugs, security issues, and style violations
-allowed-tools: [Read, Bash]
+allowed-tools: [Read, Grep, Glob, Bash]
 tags: [review, code, bug, security, style, 审查, 代码, 评审]
 boundary: 写测试 写文档 加新功能
 examples: [review this code for bugs, find security issues, 审查代码找bug]

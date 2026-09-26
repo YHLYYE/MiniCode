@@ -6,12 +6,9 @@ Core insight: Sub-agents reuse the same turn engine with different params.
 Collaboration modes:
 - explore / general: single sub-agent with toolset filter
 - team: coordinator decomposes task → parallel role sub-agents → merge
-- (worktree retired: cwd isolation not implemented, removed from the enum)
 """
 
 import asyncio
-import subprocess
-from pathlib import Path
 
 from core.tools.base import Tool
 
@@ -45,7 +42,7 @@ class AgentTool(Tool):
 
     AGENT_PROFILES = {
         "explore": {
-            "tools_filter": ["Read", "RecallMemory"],
+            "tools_filter": ["Read", "Grep", "Glob", "WebSearch", "WebFetch"],
             "max_turns": 10,
             "system_prompt": (
                 "You are a code explorer. Find relevant code and report "
@@ -62,15 +59,6 @@ class AgentTool(Tool):
                 "did and what you found. Your output IS the deliverable."
             ),
         },
-        "worktree": {
-            "tools_filter": None,
-            "max_turns": 20,
-            "system_prompt": (
-                "You are a sub-agent working in an isolated git worktree. "
-                "Complete the assigned task independently. Your changes are "
-                "isolated from the main branch. Return a summary of changes."
-            ),
-        },
     }
 
     # Team mode roles — coordinator dispatches to these in parallel
@@ -78,18 +66,14 @@ class AgentTool(Tool):
 
     _semaphore = asyncio.Semaphore(5)  # Max concurrent sub-agents
 
-    def __init__(self, agent_loop_factory=None, tool_registry=None,
-                 project_root: Path | None = None):
+    def __init__(self, agent_loop_factory=None, tool_registry=None):
         super().__init__()
         self._agent_factory = agent_loop_factory
         self._tool_registry = tool_registry or {}
-        self._project_root = project_root or Path.cwd()
 
     async def execute(self, task: str, agent_type: str = "general") -> str:
         if agent_type == "team":
             return await self._run_team(task)
-        if agent_type == "worktree":
-            return await self._run_worktree(task)
 
         profile = self.AGENT_PROFILES[agent_type]
         async with self._semaphore:
@@ -101,52 +85,6 @@ class AgentTool(Tool):
         return (
             f"[Sub-agent: {agent_type}, {result['turns']} turns, "
             f"{result['tokens']} tokens]\n\n{result['output']}"
-        )
-
-    # ── Worktree mode: git isolation for parallel write tasks ──
-
-    async def _run_worktree(self, task: str) -> str:
-        """Run a sub-agent in an isolated git worktree.
-
-        RETIRED — removed from the agent_type enum. Worktree cwd isolation
-        is not implemented (sub-agents run in the parent working directory,
-        so this path gives a false sense of isolation). Kept only for
-        reference; not reachable via normal tool invocation.
-        """
-        if not self._is_git_repo():
-            return (
-                "[Worktree mode degraded: not a git repository. "
-                "Running as general sub-agent instead.]\n\n"
-                + await self.execute(task, agent_type="general")
-            )
-
-        profile = self.AGENT_PROFILES["worktree"]
-        branch = f"minicode-worktree-{int(asyncio.get_event_loop().time())}"
-
-        try:
-            # Create isolated worktree
-            self._git("worktree", "add", "-b", branch, "worktree_dir")
-            worktree_path = self._project_root / "worktree_dir"
-
-            async with self._semaphore:
-                result = await self._run_subagent(task, profile, cwd=worktree_path)
-
-            # Report diff summary
-            diff = self._git("diff", "--stat", "main", branch)
-
-        except Exception as e:
-            return f"Worktree mode failed: {e}"
-        finally:
-            # Clean up worktree
-            try:
-                self._git("worktree", "remove", "worktree_dir", "--force")
-                self._git("branch", "-D", branch)
-            except Exception:
-                pass  # cleanup is best-effort
-
-        return (
-            f"[Worktree mode, {result['turns']} turns]\n\n"
-            f"{result['output']}\n\n[Changes (main vs {branch})]\n{diff}"
         )
 
     # ── Team mode: coordinator + parallel role sub-agents ──
@@ -203,8 +141,7 @@ class AgentTool(Tool):
 
     # ── Sub-agent runner ──
 
-    async def _run_subagent(self, task: str, profile: dict,
-                            cwd: Path | None = None) -> dict:
+    async def _run_subagent(self, task: str, profile: dict) -> dict:
         from core.agent_loop import AgentLoop
         from core.state import TextDelta, DoneEvent
 
@@ -241,25 +178,3 @@ class AgentTool(Tool):
             "turns": turns,
             "tokens": tokens,
         }
-
-    # ── Git helpers ──
-
-    def _is_git_repo(self) -> bool:
-        try:
-            subprocess.run(
-                ["git", "rev-parse", "--is-inside-work-tree"],
-                cwd=str(self._project_root), capture_output=True,
-                check=True, timeout=5,
-            )
-            return True
-        except Exception:
-            return False
-
-    def _git(self, *args: str) -> str:
-        result = subprocess.run(
-            ["git", *args], cwd=str(self._project_root),
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr.strip() or result.stdout.strip())
-        return result.stdout.strip()

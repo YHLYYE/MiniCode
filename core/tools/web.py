@@ -1,41 +1,56 @@
 """Web fetch and search tools"""
 import json
+import os
 import re
 import urllib.request
-import urllib.parse
 
 from core.tools.base import Tool
 
 
 class WebSearchTool(Tool):
-    """Search the web using DuckDuckGo (no API key required)"""
+    """Search the web via Tavily (set TAVILY_API_KEY in .env)."""
 
     name = "WebSearch"
-    description = "Search the web and return results"
+    description = (
+        "Search the web and return results with title, URL, and content. "
+        "Use to look up errors, docs, or current information."
+    )
     input_schema = {
-        "query": {"type": "string", "description": "Search query"},
+        "query": {
+            "type": "string",
+            "description": "Search query",
+        },
     }
     is_readonly = True
     is_concurrency_safe = True
 
     async def execute(self, query: str) -> str:
+        api_key = os.environ.get("TAVILY_API_KEY", "")
+        if not api_key:
+            return (
+                "WebSearch not configured: set TAVILY_API_KEY in .env "
+                "(get a free key at https://tavily.com)."
+            )
         try:
-            url = (
-                "https://api.duckduckgo.com/?"
-                f"q={urllib.parse.quote(query)}&format=json"
-            )
+            payload = json.dumps({
+                "api_key": api_key,
+                "query": query,
+                "max_results": 5,
+            }).encode("utf-8")
             req = urllib.request.Request(
-                url, headers={"User-Agent": "MiniCode/1.0"}
+                "https://api.tavily.com/search",
+                data=payload,
+                headers={"Content-Type": "application/json"},
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with urllib.request.urlopen(req, timeout=15) as resp:
                 data = json.loads(resp.read())
-            results = data.get("RelatedTopics", [])[:5]
+
+            results = data.get("results", [])[:5]
             if not results:
                 return f"No results found for: {query}"
-            return "\n".join(
-                f"- {r.get('Text', '')}"
+            return "\n\n".join(
+                f"{r.get('title', '')}\n{r.get('url', '')}\n{r.get('content', '')}"
                 for r in results
-                if r.get("Text")
             )
         except Exception as e:
             return f"WebSearch error: {e}"
