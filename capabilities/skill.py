@@ -99,8 +99,8 @@ class SkillSystem:
         for skill in self._registry.values():
             lines.append(f"  - {skill.name}: {skill.description}")
         lines.append(
-            "\nTo use a skill, call activate_skill(name) to load its full "
-            "instructions."
+            '\nTo use a skill, call the Skill tool with name="<skill-name>" '
+            "to load its full instructions."
         )
         return "\n".join(lines)
 

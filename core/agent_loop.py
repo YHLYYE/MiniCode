@@ -28,6 +28,25 @@ _STREAM_RETRY_MAX = 3           # 瞬态错误最大重试次数
 _STREAM_RETRY_BASE_DELAY = 1.0  # 指数退避基准延迟（秒）
 
 
+def truncate_result(result: str) -> str:
+    """截断超长工具结果，并在提示里给出真实省略字符数。
+
+    保留头部 (MAX_RESULT_CHARS - 1000) + 尾部 500 字符，中间省略。
+    省略数量按实际丢弃的字符数算 —— 早期版本报的是
+    len(result) - MAX_RESULT_CHARS，比实际少报 500。
+    """
+    if len(result) <= MAX_RESULT_CHARS:
+        return result
+    head_len = MAX_RESULT_CHARS - 1000
+    tail_len = 500
+    omitted = len(result) - head_len - tail_len
+    return (
+        result[:head_len]
+        + f"\n...[省略 {omitted} 字符]...\n"
+        + result[-tail_len:]
+    )
+
+
 # ── Agent Loop ──
 
 class AgentLoop:
@@ -228,13 +247,17 @@ class AgentLoop:
 
             # ── 6. Execute tools（并发安全工具并行，其余串行）──
             tool_errors: list[ToolError] = []
-            tool_input_by_id = {tc[2]: tc[1] for tc in tool_calls}
 
             async def run_one(tool_name, tool_input, tool_call_id):
-                """执行单个工具，错误内部处理，返回 (name, call_id, result)。"""
+                """执行单个工具，错误内部处理。
+
+                返回 (name, call_id, input, result)。input 一并带出，是因为
+                tool_call_id 可能为空（部分 provider 不给 id），靠 id 反查 input
+                会让多条调用互相覆盖。
+                """
                 tool = self._tools.get(tool_name)
                 if tool is None:
-                    return (tool_name, tool_call_id,
+                    return (tool_name, tool_call_id, tool_input,
                             f"Error: Tool '{tool_name}' not found. "
                             f"Available: {list(self._tools.keys())}")
                 try:
@@ -245,26 +268,25 @@ class AgentLoop:
                     else:
                         result = await tool.execute(**tool_input)
                         # 截断超长结果，防止单条工具输出塞爆上下文
-                        if len(result) > MAX_RESULT_CHARS:
-                            original = len(result)
-                            result = (
-                                result[:MAX_RESULT_CHARS - 1000]
-                                + f"\n...[省略 {original - MAX_RESULT_CHARS} 字符]...\n"
-                                + result[-500:]
-                            )
-                    return (tool_name, tool_call_id, result)
+                        result = truncate_result(result)
+                    return (tool_name, tool_call_id, tool_input, result)
                 except SecurityBlock as e:
-                    return (tool_name, tool_call_id, f"Security blocked: {e}")
+                    return (tool_name, tool_call_id, tool_input,
+                            f"Security blocked: {e}")
                 except Exception as e:
                     tool_errors.append(ToolError(tool_name, str(e)))
-                    return (tool_name, tool_call_id, f"Tool error: {e}")
+                    return (tool_name, tool_call_id, tool_input,
+                            f"Tool error: {e}")
 
             # 分组执行：并发安全工具 gather 并行；遇到不安全的先 drain 再串行
-            executed = []  # (tool_name, tool_call_id, result)，保持原顺序
+            executed = []  # (tool_name, tool_call_id, input, result)，保持原顺序
             batch = []
             for tool_name, tool_input, tool_call_id in tool_calls:
                 tool = self._tools.get(tool_name)
-                if tool is not None and tool.is_concurrency_safe:
+                # 用 check_concurrency_safe(input) 而非类属性：
+                # Tool 基类把它定义成运行时可覆盖的钩子（input 相关行为），
+                # 只读类属性会让这个钩子永远失效。
+                if tool is not None and tool.check_concurrency_safe(tool_input):
                     batch.append((tool_name, tool_input, tool_call_id))
                 else:
                     if batch:
@@ -279,9 +301,8 @@ class AgentLoop:
                 executed.extend(await asyncio.gather(*(run_one(*b) for b in batch)))
 
             # 按原顺序回流结果 + 集成回调 + 追加 tool 消息
-            for tool_name, tool_call_id, result in executed:
+            for tool_name, tool_call_id, tool_input, result in executed:
                 yield ToolResult(tool_name, result)
-                tool_input = tool_input_by_id.get(tool_call_id, {})
 
                 # ── 6.1 集成回调：追踪 active_skills / 最近编辑文件 ──
                 # Skill 激活成功 → 记入 active_skills，压缩恢复时可回灌

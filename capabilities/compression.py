@@ -101,6 +101,12 @@ class ContextCompressor:
         tokens = count_tokens(state.messages)
         ratio = tokens / self._config.max_context_tokens
 
+        # 已经压到最轻一档阈值以下 → 熔断器复原（说明上一轮压缩真的起作用了）
+        if ratio < self._config.snip_threshold_ratio:
+            if state.auto_compact_attempts:
+                return state.with_field(auto_compact_attempts=0)
+            return state
+
         if ratio >= self._config.autocompact_threshold_ratio:
             return await self._autocompact(state)
         if ratio >= self._config.collapse_threshold_ratio:
@@ -226,7 +232,10 @@ class ContextCompressor:
     async def _autocompact(self, state: LoopState) -> LoopState:
         """Ultra-compact: summarize entire session into a single message.
 
-        Circuit breaker: stops trying after N consecutive failures.
+        Circuit breaker: stops trying after N consecutive compactions that
+        failed to bring usage back under the snip threshold. Without the
+        attempt counter being incremented here, the breaker was unreachable —
+        compression would re-run every turn and burn a model call each time.
         Production data from Claude Code: 1,279 sessions had 50+
         consecutive failures before this breaker was added.
         """
@@ -235,10 +244,6 @@ class ContextCompressor:
 
         # Rule-based summary (LLM-free — safe even when context is full)
         summary = self._summarize_sync(state.messages)
-        if not summary:
-            return state.with_field(
-                auto_compact_attempts=state.auto_compact_attempts + 1
-            )
 
         compacted = [
             state.messages[0],  # System Prompt always preserved
@@ -269,7 +274,8 @@ class ContextCompressor:
             )
 
         return state.with_field(
-            messages=tuple(compacted), auto_compact_attempts=0
+            messages=tuple(compacted),
+            auto_compact_attempts=state.auto_compact_attempts + 1,
         )
 
     async def force_autocompact(self, state: LoopState) -> LoopState:

@@ -1,18 +1,20 @@
 """Shell command execution tool — 3-layer security defense"""
 import asyncio
-import re
 from pathlib import Path
 from core.tools.base import Tool
-from capabilities.security import SecurityBlock
+from capabilities.security import SecurityBlock, DANGEROUS_COMMAND_PATTERNS
 
 
 class BashTool(Tool):
     """Execute shell commands with safety checks.
 
     3-layer security:
-    1. Dangerous pattern regex detection (23+ patterns)
+    1. Dangerous pattern regex detection (DANGEROUS_COMMAND_PATTERNS — shared
+       with the permission pipeline's L1 rule filter)
     2. Timeout enforcement (max 60s)
-    3. Working directory confinement (project root only)
+    3. Working directory: the subprocess starts in the process's cwd.
+       Absolute / `..` paths inside the command are NOT confined — command-level
+       confinement is what the L1 pattern list is for.
     """
 
     name = "Bash"
@@ -35,18 +37,7 @@ class BashTool(Tool):
     is_concurrency_safe = False
     is_destructive = True
 
-    DANGEROUS_PATTERNS: list[tuple[str, str]] = [
-        (r"rm\s+(-[a-z]*[rf][a-z]*|--recursive)", "Recursive deletion"),
-        (r"\bsudo\b", "Privilege escalation"),
-        (r"chmod\s+777", "Overly permissive permissions"),
-        (r"(curl|wget).*\|.*(sh|bash|python)", "Remote script piped execution"),
-        (r">\s*/dev/[a-z]+", "Overwrite system device"),
-        (r"git\s+push\s+(--force|-f)", "Force push"),
-        (r"(DROP|TRUNCATE)\s+(TABLE|DATABASE)", "Database destruction"),
-        (r"\bmkfs\.", "Filesystem format"),
-        (r"dd\s+if=", "Direct disk I/O"),
-        (r"(/proc/|/sys/)", "System filesystem access"),
-    ]
+    DANGEROUS_PATTERNS = DANGEROUS_COMMAND_PATTERNS
     MAX_EXECUTION_TIME = 60
 
     async def execute(self, command: str, timeout: int = 30) -> str:

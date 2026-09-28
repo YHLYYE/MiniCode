@@ -81,7 +81,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 84 个测试
+└── tests/                     # 113 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -97,7 +97,7 @@ Desktop/minicode/
 | 组件 | 选型 | 理由 |
 |------|------|------|
 | LLM 调用 | `litellm`（统一 100+ 模型） | 借鉴 mini-swe-agent，模型无关；一个接口支持 Claude/DeepSeek/OpenAI/Gemini/本地 |
-| Agent Loop | 100% 自研 while-true | 面试核心，逐行可解释 |
+| Agent Loop | 100% 自研 while-true | 设计核心，逐行可解释 |
 | 工具装饰器 | 自研 Tool ABC | 控制所有行为，不依赖框架 |
 | CLI | Click | 简单，`python main.py` 交互式 REPL |
 | 记忆检索 | 纯 Python n-gram 哈希 + 余弦相似度 | 评估 ChromaDB 后（Windows onnxruntime 崩溃）自研，零外部模型 |

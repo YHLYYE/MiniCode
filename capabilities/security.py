@@ -32,25 +32,54 @@ class SecurityBlock(Exception):
 
 # ── L1: Rule Filter (< 1ms, synchronous) ──
 
+# Single source of truth for dangerous shell patterns.
+# BashTool imports this list instead of keeping its own copy (two copies
+# drifted apart: both had 10 patterns, and neither covered Windows deletion).
+DANGEROUS_COMMAND_PATTERNS: list[tuple[str, str]] = [
+    # ── Unix: recursive / forced deletion ──
+    (r"\brm\s+(-[a-z]*[rf][a-z]*|--recursive|--force)", "recursive/forced deletion"),
+    (r"\b(chmod|chown)\s+-R\b", "recursive permission change"),
+    # ── Windows equivalents (previously unguarded) ──
+    (r"\b(rd|rmdir)\b[^\n]*/\s?s\b", "recursive directory deletion"),
+    (r"\bdel\b[^\n]*/\s?[sf]\b", "forced deletion"),
+    (r"\b(remove-item|ri)\b[^\n]*-recurse", "recursive deletion"),
+    (r"\bformat\s+[a-z]:", "filesystem format"),
+    (r"\b(takeown|icacls)\b", "ownership / ACL takeover"),
+    (r"\breg\s+delete\b", "registry deletion"),
+    (r"\bdiskpart\b", "disk partitioning"),
+    # ── Other destructive operations ──
+    (r"\bgit\s+clean\b[^\n]*-[a-z]*f", "untracked file deletion"),
+    (r"\bsudo\b", "privilege escalation"),
+    (r"\bchmod\s+777", "overly permissive permissions"),
+    (r"(curl|wget)\b[^\n]*\|[^\n]*\b(sh|bash|zsh|python3?)\b", "remote script piped execution"),
+    (r">\s*/dev/(?!null\b)[a-z]+", "system device overwrite"),
+    (r"\bgit\s+push\b[^\n]*(--force\b|\s-f\b)", "force push"),
+    (r"\b(DROP|TRUNCATE)\s+(TABLE|DATABASE)", "database destruction"),
+    (r"\bmkfs\.", "filesystem format"),
+    (r"\bdd\s+if=", "direct disk I/O"),
+    (r"/proc/|/sys/", "system filesystem access"),
+    (r"\b(shutdown|reboot|halt|poweroff)\b", "system shutdown"),
+    (r":\(\)\s*\{.*\}\s*;\s*:", "fork bomb"),
+]
+
+# Which tools take a filesystem path, and under which argument name.
+# Grep/Glob were previously unconfined — `Grep(path="C:/")` could walk a whole drive.
+_PATH_PARAM = {
+    "Read": "file_path",
+    "Write": "file_path",
+    "Edit": "file_path",
+    "Grep": "path",
+    "Glob": "path",
+}
+
 class RuleFilter:
     """First line of defense — regex-based dangerous pattern detection.
 
-    Checks commands against 9+ dangerous patterns and validates
-    file write paths are within the project directory.
+    Checks commands against DANGEROUS_COMMAND_PATTERNS and validates
+    every path-taking tool stays within the project directory.
     """
 
-    DANGEROUS_PATTERNS: list[tuple[str, str]] = [
-        (r"rm\s+(-[a-z]*[rf][a-z]*|--recursive)", "recursive deletion"),
-        (r"\bsudo\b", "privilege escalation"),
-        (r"chmod\s+777", "overly permissive permissions"),
-        (r"(curl|wget).*\|.*(sh|bash|python)", "remote script execution"),
-        (r">\s*/dev/[a-z]+", "system device overwrite"),
-        (r"git\s+push\s+(--force|-f)", "force push"),
-        (r"(DROP|TRUNCATE)\s+(TABLE|DATABASE)", "database destruction"),
-        (r"\bmkfs\.", "filesystem format"),
-        (r"dd\s+if=", "direct disk I/O"),
-        (r"(/proc/|/sys/)", "system filesystem access"),
-    ]
+    DANGEROUS_PATTERNS = DANGEROUS_COMMAND_PATTERNS
 
     def __init__(self):
         self.path_allowlist = [Path.cwd()]
@@ -70,9 +99,9 @@ class RuleFilter:
                         f"Blocked ({reason}): {command[:100]}"
                     )
 
-        # Check file paths (Read/Write/Edit): resolve symlinks/.. and confine to project
-        if tool_call.name in ("Read", "Write", "Edit"):
-            raw = tool_call.input.get("file_path", "")
+        # Check file paths: resolve symlinks/.. and confine to project
+        if tool_call.name in _PATH_PARAM:
+            raw = tool_call.input.get(_PATH_PARAM[tool_call.name]) or "."
             try:
                 resolved = Path(raw).resolve()
             except (OSError, ValueError):

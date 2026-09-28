@@ -2,7 +2,7 @@
 
 这是项目里「真的调 API」的证据工具：跑一次真实任务，把结果
 （轮次 / token / 成本 / 耗时 / 完整回答 / 工具调用）存档到
-reports/ 目录下的 Markdown 报告，供面试展示。
+    reports/ 目录下的 Markdown 报告，供复现与展示。
 
 用法:
     DEEPSEEK_API_KEY=sk-xxx python benchmarks/run_real.py "列出当前目录的文件"
