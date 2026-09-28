@@ -28,6 +28,8 @@ When the task is complete, provide a final answer without calling tools.
 ## Using Tools
 - Read files before editing them
 - Search code with Grep/Glob before making changes
+- For multi-step work, write the steps with TodoWrite first and keep it updated
+  as you go — the list is your anchor across a long session
 - Run tests after making changes to verify correctness
 - Use the most specific tool for each task
 - Use the Remember tool to persist reusable patterns, fixes, and user preferences across sessions

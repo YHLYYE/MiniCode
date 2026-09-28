@@ -130,6 +130,7 @@ class ContextCompressor:
         self._config = config or CompressionConfig()
         self._cache: dict[str, str] = {}
         self._recent_edits: list[tuple[str, str]] = []
+        self._task_list: str = ""
 
     def record_edit(self, file_path: str, content: str):
         """Track recent file edits for post-compression restoration."""
@@ -137,6 +138,15 @@ class ContextCompressor:
         max_edits = self._config.restore_recent_edits
         if len(self._recent_edits) > max_edits:
             self._recent_edits = self._recent_edits[-max_edits:]
+
+    def record_task_list(self, content: str):
+        """记住最近一份 TodoWrite 清单。
+
+        它是长任务里的锚点（总共几件事、做到哪一步），所以有两个特殊待遇：
+        Snip 时跳过它、Autocompact 后回灌它。否则跑过几个工具之后，这份清单
+        就会被替换成占位符，而且取不回来。
+        """
+        self._task_list = content
 
     async def compress_if_needed(self, state: LoopState) -> LoopState:
         """Check token usage and apply appropriate compression tier."""
@@ -189,6 +199,9 @@ class ContextCompressor:
 
         new_messages = list(state.messages)
         for i, msg in to_snip:
+            # 任务清单是锚点，不能变成占位符
+            if self._task_list and msg.content == self._task_list:
+                continue
             key = sha256(msg.content)[:8]
             self._cache[key] = msg.content
             new_messages[i] = Message(
@@ -282,6 +295,13 @@ class ContextCompressor:
                 )
             )
 
+        # Restore the task list — 长任务的进度锚点
+        if self._task_list:
+            compacted.append(Message(
+                role="user",
+                content=f"[Current task list]\n{self._task_list}",
+            ))
+
         return state.with_field(
             messages=tuple(compacted),
             auto_compact_attempts=state.auto_compact_attempts + 1,
@@ -324,6 +344,13 @@ class ContextCompressor:
                         content=f"[Active skill: {skill_name}]",
                     )
                 )
+
+            # Restore the task list — 长任务的进度锚点
+            if self._task_list:
+                compacted.append(Message(
+                    role="user",
+                    content=f"[Current task list]\n{self._task_list}",
+                ))
 
             return state.with_field(
                 messages=tuple(compacted), auto_compact_attempts=0

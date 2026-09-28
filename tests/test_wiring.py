@@ -30,13 +30,14 @@ def test_normal_mode_registers_all_tools(tmp_path, monkeypatch):
 
 
 def test_plan_mode_keeps_only_readonly_tools(tmp_path, monkeypatch):
-    """plan 模式只保留只读工具"""
+    """plan 模式只保留只读工具 + TodoWrite（它只写 agent 自己的记账文件）"""
     monkeypatch.chdir(tmp_path)
     tools, _, _, memory_manager, _ = _unpack("plan")
     try:
         assert {t.name for t in tools} == {
             "Read", "Grep", "Glob", "WebSearch", "WebFetch",
             "Skill", "RecallMemory",
+            "TodoWrite",  # 只读模式也要能写待办清单，否则「规划模式」写不了计划
         }
     finally:
         memory_manager.close()

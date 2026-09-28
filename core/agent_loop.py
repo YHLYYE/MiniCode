@@ -372,6 +372,9 @@ class AgentLoop:
                                 await self._memory.record_file_edit(
                                     file_path, "", ""
                                 )
+                # TodoWrite 成功 → 记住这份清单（Snip 跳过它、Autocompact 回灌它）
+                if tool_name == "TodoWrite" and result.startswith("## Task List"):
+                    self._compressor.record_task_list(result)
 
                 self._state = self._state.add_message(
                     Message(role="tool", content=result, tool_call_id=tool_call_id)

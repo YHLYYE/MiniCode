@@ -280,11 +280,25 @@ class ExecutionMode(Enum):
     NORMAL = "normal"   # Full toolset
 
 
+# Plan 模式承诺的是「不碰用户的代码」，而这个工具只写 agent 自己的记账文件
+# （.minicode/todos.md）。所以它可以进 Plan 模式 —— 否则「只读规划模式」里
+# 连待办清单都写不了。
+PLAN_MODE_EXTRA_TOOLS = {"TodoWrite"}
+
+
 def resolve_tools_for_mode(tools: list, mode: ExecutionMode) -> list:
     """Filter tools based on execution mode.
     Plan mode: API-level isolation — write tools are physically removed.
     Even if the model hallucinates a write tool call, it cannot execute.
+
+    TodoWrite is the one exception: Plan mode promises "don't touch the user's
+    code", and the task list only writes to the agent's own bookkeeping file
+    (.minicode/todos.md). Without it you cannot even write a plan in plan mode.
     """
     if mode == ExecutionMode.PLAN:
-        return [t for t in tools if getattr(t, "is_readonly", False)]
+        return [
+            t for t in tools
+            if getattr(t, "is_readonly", False)
+            or t.name in PLAN_MODE_EXTRA_TOOLS
+        ]
     return tools
