@@ -47,6 +47,19 @@ def truncate_result(result: str) -> str:
     )
 
 
+def _with_system_prompt(state: LoopState, system_prompt: str) -> LoopState:
+    """Replace messages[0] with a fresh System Prompt (prepend if absent).
+
+    The system message is rebuilt once per task so the routing hint can
+    reflect the current task. Conversation history is untouched.
+    """
+    head = Message(role="system", content=system_prompt)
+    messages = state.messages
+    if messages and messages[0].role == "system":
+        return state.with_field(messages=(head,) + messages[1:])
+    return state.with_field(messages=(head,) + messages)
+
+
 # ── Agent Loop ──
 
 class AgentLoop:
@@ -69,6 +82,7 @@ class AgentLoop:
         max_turns: int = 20,
         max_cost_usd: float = 5.0,
         memory_manager: MemoryManager | None = None,
+        system_prompt_factory=None,
     ):
         self._tools = {t.name: t for t in tools}
         self._model = model_adapter
@@ -78,6 +92,7 @@ class AgentLoop:
         self._state: LoopState | None = None
         self._current_task: str | None = None
         self._memory = memory_manager
+        self._system_prompt_factory = system_prompt_factory
         self._compressor = ContextCompressor()
         self._permission = PermissionManager(model=model_adapter)
 
@@ -94,6 +109,7 @@ class AgentLoop:
                           enabling multi-task conversation in the same loop)
         """
         self._current_task = task
+        system_prompt = self._resolve_system_prompt(task)
         if resume_state:
             state = resume_state
         elif self._state is not None and self._state.messages:
@@ -107,14 +123,31 @@ class AgentLoop:
         else:
             state = LoopState(
                 messages=(
-                    Message(role="system", content=self._system_prompt),
+                    Message(role="system", content=system_prompt),
                     Message(role="user", content=task),
                 ),
                 transition=ContinueReason.NEXT_TURN,
             )
 
+        # 每轮任务刷新 System Prompt 的动态段（含本次任务的路由候选）。
+        # 静态段不变，所以前缀缓存仍然命中。
+        state = _with_system_prompt(state, system_prompt)
+
         async for event in self._query_loop(state):
             yield event
+
+    def _resolve_system_prompt(self, task: str) -> str:
+        """Build this task's System Prompt, if a factory was supplied.
+
+        Routing must never be able to block a task — any failure falls back
+        to the prompt captured at construction time.
+        """
+        if self._system_prompt_factory is None:
+            return self._system_prompt
+        try:
+            return self._system_prompt_factory(task) or self._system_prompt
+        except Exception:
+            return self._system_prompt
 
     async def _query_loop(self, state: LoopState):
         """Inner loop: per-turn execution with 5 recovery paths."""

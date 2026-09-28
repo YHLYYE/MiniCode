@@ -138,6 +138,47 @@ class SkillSystem:
 
     # ── Two-stage routing (召回 → 精排) ──
 
+    # rerank confidence floor. Calibrated against skills/: real matches land
+    # at 0.43-1.00, incidental tag hits at 0.00-0.13. Below the floor the
+    # signal is noise, so the hint is omitted entirely rather than shown.
+    ROUTING_MIN_CONFIDENCE = 0.30
+
+    def routing_hint(self, task: str, top_k: int = 3,
+                     min_confidence: float | None = None) -> str:
+        """Format the two-stage routing result for the System Prompt tail.
+
+        Called once per task by the Agent Loop. Returns "" when nothing is
+        relevant enough. The hint is a nudge, not a restriction — the model
+        may still load a different skill, or none.
+        """
+        if not task or not self._registry:
+            return ""
+
+        floor = (self.ROUTING_MIN_CONFIDENCE if min_confidence is None
+                 else min_confidence)
+        ranked = [
+            (skill, confidence)
+            for skill, confidence in self.route(task, top_k=top_k)
+            if confidence >= floor
+        ]
+        if not ranked:
+            return ""
+
+        lines = [
+            "## Task Routing",
+            "Two-stage routing (recall → rerank) suggests the following skills "
+            "for the current task. This is a suggestion, not a restriction.",
+        ]
+        for skill, confidence in ranked:
+            lines.append(
+                f"- {skill.name} (confidence {confidence:.2f}): "
+                f"{skill.description}"
+            )
+        lines.append(
+            'Load one with the Skill tool: name="<skill-name>".'
+        )
+        return "\n".join(lines)
+
     def route(self, task: str, top_k: int = 3) -> list[tuple[Skill, float]]:
         """Two-stage skill routing for task → skill matching.
 

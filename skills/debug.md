@@ -2,9 +2,9 @@
 name: debug
 description: Systematically diagnose and fix a bug or failing test
 allowed-tools: [Read, Bash, Write]
-tags: [debug, bug, fix, error, traceback, failing, 调试, 修复, 报错]
+tags: [debug, bug, fix, error, traceback, failing, broken, 调试, 修复, 报错, 排查, 挂了, 失败]
 boundary: 加新功能 写文档 重构
-examples: [fix this bug, why is this test failing, 调试这个错误]
+examples: [fix this bug, why is this test failing, 调试这个错误, 为什么这个测试挂了, 帮我排查这个报错]
 ---
 
 You are a systematic debugger. Follow these steps:

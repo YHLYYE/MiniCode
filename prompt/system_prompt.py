@@ -4,14 +4,18 @@ from datetime import datetime
 from pathlib import Path
 
 
-def build_system_prompt(skill_index: str = "", claude_md: str = "") -> str:
+def build_system_prompt(skill_index: str = "", claude_md: str = "",
+                        routing_hint: str = "") -> str:
     """Build the system prompt with static and dynamic sections.
 
     The static section contains identity, safety rules, and core loop
     instructions that never change → always cacheable.
 
     The dynamic section contains skills index, project context (CLAUDE.md),
-    and environment info that change per session → not cached.
+    environment info, and the per-task routing hint. It changes between
+    tasks, so the routing hint is appended **last**: everything before it
+    stays byte-identical across tasks, which is what keeps the server-side
+    prefix cache usable.
     """
 
     static = """You are MiniCode, an AI coding agent.
@@ -57,6 +61,10 @@ When the task is complete, provide a final answer without calling tools.
 - Working Directory: {Path.cwd()}
 - Date: {datetime.now().strftime('%Y-%m-%d')}
 """)
+
+    # Per-task routing hint — MUST stay last (see docstring).
+    if routing_hint:
+        dynamic_parts.append(routing_hint)
 
     dynamic = "\n\n".join(dynamic_parts)
 

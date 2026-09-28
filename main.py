@@ -37,11 +37,25 @@ from capabilities.security import resolve_tools_for_mode, ExecutionMode
 from prompt.system_prompt import build_system_prompt
 from session_store import SessionStore
 
+# 包根目录 —— 内置 skills 必须按绝对路径加载，不能依赖 cwd，
+# 否则从项目目录之外启动 MiniCode 时一个 skill 都加载不到。
+PACKAGE_ROOT = Path(__file__).resolve().parent
+
 
 def _build_tools(mode: str, config: Config):
-    """Initialize subsystems and return (tools, system_prompt, exec_mode, memory_manager)."""
+    """Initialize subsystems.
+
+    Returns (tools, system_prompt, exec_mode, memory_manager,
+    system_prompt_factory). The factory rebuilds the System Prompt per task so
+    the two-stage Skill routing result can be injected into the dynamic tail.
+    """
     skill_system = SkillSystem()
-    skill_system.register_from_source(Path("skills/"), priority=10)
+    builtin_skills = PACKAGE_ROOT / "skills"
+    skill_system.register_from_source(builtin_skills, priority=10)
+    # 当前工作目录下的 skills/ 作为项目级覆盖（同名覆盖内置）
+    cwd_skills = Path.cwd() / "skills"
+    if cwd_skills.resolve() != builtin_skills.resolve():
+        skill_system.register_from_source(cwd_skills, priority=20)
     memory_manager = MemoryManager()
 
     def _agent_factory(tools, system_prompt, max_turns):
@@ -74,11 +88,15 @@ def _build_tools(mode: str, config: Config):
     exec_mode = ExecutionMode.PLAN if mode == "plan" else ExecutionMode.NORMAL
     tools = resolve_tools_for_mode(all_tools, exec_mode)
 
-    system_prompt = build_system_prompt(
-        skill_index=skill_system.get_index_for_system_prompt(),
-        claude_md=memory_manager.load_claude_md(),
-    )
-    return tools, system_prompt, exec_mode, memory_manager
+    def system_prompt_for(task: str) -> str:
+        return build_system_prompt(
+            skill_index=skill_system.get_index_for_system_prompt(),
+            claude_md=memory_manager.load_claude_md(),
+            routing_hint=skill_system.routing_hint(task, top_k=3),
+        )
+
+    system_prompt = system_prompt_for("")
+    return tools, system_prompt, exec_mode, memory_manager, system_prompt_for
 
 
 @click.command()
@@ -112,7 +130,8 @@ def main(task: str | None, mode: str, max_turns: int, max_cost: float,
                 print(f"  {sid}")
         return
 
-    tools, system_prompt, exec_mode, memory_manager = _build_tools(mode, config)
+    (tools, system_prompt, exec_mode, memory_manager,
+     system_prompt_factory) = _build_tools(mode, config)
 
     # --resume: 加载历史会话
     resume_state = None
@@ -127,7 +146,7 @@ def main(task: str | None, mode: str, max_turns: int, max_cost: float,
         # 单次任务模式
         _print_header(config, mode, max_turns, max_cost)
         loop = _make_loop(config, tools, system_prompt, max_turns, max_cost,
-                          memory_manager)
+                          memory_manager, system_prompt_factory)
         if resume_state:
             loop._state = resume_state
         print(f"> {task}\n")
@@ -137,11 +156,12 @@ def main(task: str | None, mode: str, max_turns: int, max_cost: float,
     else:
         # 交互式 REPL 模式
         asyncio.run(_interactive_repl(config, tools, system_prompt, exec_mode,
-                                      store, resume_state, memory_manager))
+                                      store, resume_state, memory_manager,
+                                      system_prompt_factory))
 
 
 def _make_loop(config, tools, system_prompt, max_turns, max_cost,
-               memory_manager=None):
+               memory_manager=None, system_prompt_factory=None):
     return AgentLoop(
         tools=tools,
         model_adapter=ModelAdapter(config.model),
@@ -149,6 +169,7 @@ def _make_loop(config, tools, system_prompt, max_turns, max_cost,
         max_turns=max_turns,
         max_cost_usd=max_cost,
         memory_manager=memory_manager,
+        system_prompt_factory=system_prompt_factory,
     )
 
 
@@ -161,7 +182,8 @@ def _print_header(config, mode, max_turns, max_cost):
 
 async def _interactive_repl(config, tools, system_prompt, exec_mode,
                             store: SessionStore | None = None,
-                            resume_state=None, memory_manager=None):
+                            resume_state=None, memory_manager=None,
+                            system_prompt_factory=None):
     """交互式 REPL — 启动一次，连续对话，上下文持续。"""
     print("=" * 60)
     print("MiniCode 交互模式")
@@ -171,7 +193,8 @@ async def _interactive_repl(config, tools, system_prompt, exec_mode,
     print("=" * 60)
 
     loop = _make_loop(config, tools, system_prompt, config.max_turns,
-                      config.max_cost_usd, memory_manager)
+                      config.max_cost_usd, memory_manager,
+                      system_prompt_factory)
     if resume_state:
         loop._state = resume_state
 
@@ -196,7 +219,7 @@ async def _interactive_repl(config, tools, system_prompt, exec_mode,
         if cmd in ("/clear", "/reset"):
             loop = _make_loop(config, tools, system_prompt,
                               config.max_turns, config.max_cost_usd,
-                              memory_manager)
+                              memory_manager, system_prompt_factory)
             print("[已清空对话历史]")
             continue
         if cmd in ("/save", "/s"):

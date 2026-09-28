@@ -73,7 +73,7 @@ Desktop/minicode/
 ├── skills/                    # Skill 定义文件
 │   └── code_review.md
 ├── prompt/
-│   └── system_prompt.py       # 5 段式 System Prompt
+│   └── system_prompt.py       # System Prompt 组装（静态段 + 动态段 + 路由块）
 ├── benchmarks/                # 基准测试（实测量化数据）
 │   ├── record.py              # 四级压缩比
 │   └── e2e.py                 # 端到端 Token 成本对比
@@ -81,7 +81,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 116 个测试
+└── tests/                     # 130 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -591,6 +591,41 @@ for skill_name in active_skills:
     compacted.append(Message(role="user", content=skill_content))
 ```
 
+### 4.6 二阶段路由：每任务跑一次，结果压在动态段末尾
+
+System Prompt 里那行索引（name + description）是给模型的「廉价广告」，但技能一多，
+索引本身就变成噪声。所以每个任务开始时再跑一次路由，把 top-k 候选**预排好**放进去：
+
+```
+① 召回：关键词 / 标签 / 示例的重叠打分 → Top-10
+② 精排：边界惩罚 + 示例加权 → 置信度归一化到 0-1
+③ 过滤：置信度 < 0.30 的丢弃
+   （实测真实匹配落在 0.43-1.00，偶发标签命中落在 0.00-0.13）
+```
+
+注入位置是**动态段的最末尾**：
+
+```
+[静态段：身份 / 循环 / 安全 / 最佳实践]        ← 逐字节不变，可缓存
+---DYNAMIC---
+## Available Skills（一行一个索引）
+## Project Context（CLAUDE.md）
+## Environment（OS / cwd / 日期）
+## Task Routing（本次任务的候选，每任务变）      ← 只有这一段变
+```
+
+于是「路由块之前的所有内容」在任务之间逐字节一致，服务端前缀缓存照常命中。
+
+两条硬性约束：
+
+- **建议而非限制**：提示词里明写 "This is a suggestion, not a restriction"，
+  模型仍可调用别的 Skill，或一个都不调。
+- **路由失败不能挡住任务**：`AgentLoop._resolve_system_prompt()` 捕获任何异常，
+  回退到构造时那份 prompt。
+
+> 实测（`tests/test_routing_wiring.py`）：「帮我审查一下这段代码有没有bug」→ code-review 1.00；
+> 「为什么这个测试挂了，帮我查一下」→ debug 1.00；「量子计算的哈密顿量怎么对角化」→ 不产出路由块。
+
 ---
 
 ## 5. 上下文压缩
@@ -599,7 +634,7 @@ for skill_name in active_skills:
 
 ```
 Token 使用率
-  95% → Autocompact：fork 子 Agent 全量摘要
+  95% → Autocompact：规则化全量摘要（不调 LLM，上下文已满时调不动）
   85% → Collapse：掐头去尾 + 中间结构化摘要
   70% → Snip：旧工具输出 → 占位符替换
   50% → Truncation：单条结果超过 30K chars 时实时截断
@@ -610,7 +645,7 @@ Token 使用率
 ```python
 @dataclass
 class CompressionConfig:
-    max_context_tokens: int = 180_000
+    max_context_tokens: int = 60_000
     truncation_threshold: int = 30_000
     snip_threshold_ratio: float = 0.70
     collapse_threshold_ratio: float = 0.85
@@ -1056,7 +1091,7 @@ def resolve_tools_for_mode(all_tools: list[Tool],
 
 ## 9. 系统组装
 
-### 9.1 System Prompt 组装（5 段式）
+### 9.1 System Prompt 组装（静态段 + 动态段，路由块压末尾）
 
 ```python
 def build_system_prompt(config: Config) -> str:
@@ -1075,8 +1110,12 @@ Use tools. When task is complete, provide final answer without calling tools.
     dynamic = ""
     dynamic += "\n## Skills\n" + skill_system.get_index_for_system_prompt()
     dynamic += "\n## Project Context\n" + memory_manager.load_claude_md()
-    dynamic += "\n## Previous Session\n" + memory_manager.load_session_summary()
     dynamic += f"\n## Environment\n- OS: {platform.system()}\n- CWD: {Path.cwd()}"
+    # 必须最后：这是唯一随任务变化的一段（见 4.6）。
+    # 放在末尾才能让它之前的内容在任务间逐字节一致 → 前缀缓存可用。
+    routing_hint = skill_system.routing_hint(task, top_k=3)
+    if routing_hint:
+        dynamic += "\n" + routing_hint
 
     return static + "\n---DYNAMIC---\n" + dynamic
 ```

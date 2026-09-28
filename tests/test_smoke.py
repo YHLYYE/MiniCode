@@ -19,9 +19,11 @@ async def test_real_agent_completes_simple_task():
     from core.state import DoneEvent, TextDelta
 
     config = Config.from_env()
-    tools, system_prompt, _, memory_manager = main._build_tools("normal", config)
+    (tools, system_prompt, _, memory_manager,
+     prompt_factory) = main._build_tools("normal", config)
     loop = main._make_loop(config, tools, system_prompt,
-                           config.max_turns, config.max_cost_usd, memory_manager)
+                           config.max_turns, config.max_cost_usd,
+                           memory_manager, prompt_factory)
     try:
         events = []
         async for event in loop.run("列出当前目录下的文件"):
