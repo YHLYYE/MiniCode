@@ -81,6 +81,28 @@ class AgentTool(Tool):
         super().__init__()
         self._agent_factory = agent_loop_factory
         self._tool_registry = tool_registry or {}
+        # 子 Agent 用完的 token / 成本攒在这里，等父级 drain_usage() 取走
+        self._pending_tokens = 0
+        self._pending_cost = 0.0
+
+    # ── 用量回流 ──
+
+    def drain_usage(self) -> tuple[int, float] | None:
+        """交出自上次调用以来子 Agent 的 (tokens, cost_usd)，并清零。
+
+        Agent Loop 每执行完一个工具就会调这个（如果工具定义了它），把用量
+        累加进父级账本。这是 `--max-cost` 能覆盖子 Agent 的唯一通路。
+        """
+        if self._pending_tokens == 0 and self._pending_cost == 0.0:
+            return None
+        usage = (self._pending_tokens, self._pending_cost)
+        self._pending_tokens = 0
+        self._pending_cost = 0.0
+        return usage
+
+    def _record_subagent_usage(self, result: dict) -> None:
+        self._pending_tokens += result.get("tokens", 0)
+        self._pending_cost += result.get("cost_usd", 0.0)
 
     async def execute(self, task: str, agent_type: str = "general") -> str:
         if agent_type == "team":
@@ -92,10 +114,12 @@ class AgentTool(Tool):
                 result = await self._run_subagent(task, profile)
             except Exception as e:
                 return f"Sub-agent ({agent_type}) failed: {e}"
+        self._record_subagent_usage(result)
 
         return (
             f"[Sub-agent: {agent_type}, {result['turns']} turns, "
-            f"{result['tokens']} tokens]\n\n{result['output']}"
+            f"{result['tokens']} tokens, ${result['cost_usd']:.4f}]\n\n"
+            f"{result['output']}"
         )
 
     # ── Team mode: research → coding → testing pipeline ──
@@ -149,6 +173,7 @@ class AgentTool(Tool):
                     entry = {"role": role, "ok": False, "output": str(e),
                              "turns": 0, "tokens": 0}
             results.append(entry)
+            self._record_subagent_usage(entry)
             if not entry["ok"]:
                 break  # 上一步失败 → 后面的步骤没有输入可接
             upstream_role, upstream_output = role, entry["output"]
@@ -191,15 +216,18 @@ class AgentTool(Tool):
         output_parts = []
         turns = 0
         tokens = 0
+        cost = 0.0
         async for event in sub.run(task):
             if isinstance(event, TextDelta):
                 output_parts.append(event.text)
             elif isinstance(event, DoneEvent):
                 turns = event.state.turn_count
                 tokens = event.state.total_tokens
+                cost = event.state.total_cost_usd
 
         return {
             "output": "".join(output_parts),
             "turns": turns,
             "tokens": tokens,
+            "cost_usd": cost,
         }

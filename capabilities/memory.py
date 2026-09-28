@@ -32,7 +32,6 @@ import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
@@ -525,27 +524,23 @@ class MemoryManager:
     def load_claude_md(self) -> str:
         if not self._claude_md_path.exists():
             return (
-                "[No CLAUDE.md found. Create one at the project root "
-                "to store coding conventions, preferences, and project "
-                "context. The agent will update it as it learns about "
-                "your project.]"
+                "[No CLAUDE.md found. Create one at the project root to store "
+                "coding conventions and project context; whatever it contains "
+                "is injected into this prompt.]"
             )
         return self._claude_md_path.read_text(encoding="utf-8")
 
     def load_session_summary(self) -> str:
+        """上一次会话的规则式摘要（REPL 退出时写入），注入 System Prompt。"""
         if not self._session_summary_path.exists():
             return ""
-        return self._session_summary_path.read_text(encoding="utf-8")
-
-    def update_claude_md(self, convention: str):
-        existing = ""
-        if self._claude_md_path.exists():
-            existing = self._claude_md_path.read_text(encoding="utf-8")
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-        new_entry = f"\n## Convention (added {timestamp})\n{convention}\n"
-        self._claude_md_path.write_text(existing + new_entry, encoding="utf-8")
+        # 摘要要进每一轮的 System Prompt，做个上限避免旧摘要越滚越大
+        return self._session_summary_path.read_text(
+            encoding="utf-8"
+        )[:2000]
 
     def record_session_summary(self, summary: str):
+        """REPL 退出时调用，见 main.py。CLAUDE.md 保持人工维护，不自动改写。"""
         self._session_summary_path.parent.mkdir(parents=True, exist_ok=True)
         self._session_summary_path.write_text(summary, encoding="utf-8")
 

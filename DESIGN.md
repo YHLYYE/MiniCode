@@ -81,7 +81,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 130 个测试
+└── tests/                     # 144 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -956,6 +956,30 @@ class AgentTool(Tool):
 - 独立的 `max_turns` 和 `context_budget`
 - 执行完毕后只返回结果摘要到主 Agent 上下文
 
+### 7.4 用量回流（否则预算是假的）
+
+子 Agent 有**自己的 `LoopState` 和自己的账本**，父级默认看不到它花了多少。
+不处理的话有两个后果：`--max-cost` 只管得住主 Agent，而且最后那行
+「完成: N tokens, $X」是少算的。
+
+做法是一个很小的约定 —— 会花钱的工具暴露 `drain_usage()`：
+
+```python
+class AgentTool(Tool):
+    def drain_usage(self) -> tuple[int, float] | None:
+        """交出自上次调用以来的 (tokens, cost_usd) 并清零。"""
+
+# Agent Loop 每执行完一个工具都会问一次（并发段不能改 state，
+# 所以用量随结果一起返回，回到串行段再累加）
+drain = getattr(tool, "drain_usage", None)
+usage = drain() if callable(drain) else None
+...
+if usage is not None:
+    state = state.add_external_usage(*usage)
+```
+
+`main.py` 里单个子 Agent 的额度取总预算的 1/4（team 最多 3 个子 Agent + 主 Agent）。
+
 ---
 
 ## 8. 安全审查
@@ -965,9 +989,10 @@ class AgentTool(Tool):
 ```
 工具调用请求
   ↓
-① 规则过滤器（<1ms）→ 23+ 危险模式 + 路径白名单 → 拒绝
+① 规则过滤器（<1ms）→ 危险命令正则 + 路径白名单（Read/Write/Edit/Grep/Glob）→ 拒绝
   ↓ 通过
-② 工具自检（<5ms）→ Bash 白名单 / 输出重定向检查
+② 工具自检（<5ms）→ Bash 白名单 / 输出重定向检查；
+   **其余声明了 is_destructive 的工具（Write/Edit）至少升到 MEDIUM**
   ↓ 通过
 ③ AI 风险分类器（~500ms）→ 检测 Prompt 注入 / 范围越界
   ↓ high/critical
@@ -1329,7 +1354,7 @@ class SessionStore:
    → 子 Agent 复用同一个 AgentLoop 但拥有独立 messages[]。执行完毕只返回结果摘要，不回传完整上下文。AgentTool 统一路由——模型只需要学会用"Agent"这个工具。
 
 5. **"四层安全审查的 fail-closed 怎么体现？"**
-   → Tool 默认 is_concurrency_safe=False，忘记声明就串行；默认 is_readonly=False，触发权限检查。L1 正则拒绝危险命令，L2 检查参数合法性，L3 AI 分类，L4 人工确认。Plan 模式 API 层面物理隔离写操作工具。
+   → Tool 默认 is_concurrency_safe=False，忘记声明就串行；默认 is_readonly=False，触发权限检查。L1 正则拒绝危险命令 + 路径白名单，L2 检查参数（破坏性工具至少 MEDIUM，保证进得了 L3），L3 AI 分类（无模型 / 异常一律判 HIGH），L4 人工确认（拿不到输入也判拒绝）。Plan 模式在工具集层面物理移除写操作工具。
 
 ---
 

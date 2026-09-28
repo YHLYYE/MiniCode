@@ -166,3 +166,33 @@ def test_chinese_content_is_searchable(tmp_path):
 
     results = asyncio.run(run())
     assert any("空指针" in e.content for e in results)
+
+
+# ── 会话摘要（此前是死代码：定义了但没人调用） ──
+
+def test_session_summary_round_trip(tmp_path):
+    mm = MemoryManager(project_root=tmp_path)
+    assert mm.load_session_summary() == ""
+
+    mm.record_session_summary("Files modified (2 total):\n  - a.py\n  - b.py")
+    loaded = mm.load_session_summary()
+    assert "a.py" in loaded and "b.py" in loaded
+
+
+def test_session_summary_is_capped(tmp_path):
+    mm = MemoryManager(project_root=tmp_path)
+    mm.record_session_summary("x" * 5000)
+    assert len(mm.load_session_summary()) == 2000
+
+
+def test_claude_md_fallback_promises_nothing_it_cannot_do(tmp_path):
+    """提示词里不能再写「agent 会自动更新 CLAUDE.md」——那是死代码。"""
+    mm = MemoryManager(project_root=tmp_path)
+    text = mm.load_claude_md()
+    assert "will update it" not in text
+    assert "No CLAUDE.md found" in text
+
+
+def test_update_claude_md_is_gone():
+    """未被任何人调用的写入口已删除，避免文档宣称一个不存在的能力。"""
+    assert not hasattr(MemoryManager, "update_claude_md")

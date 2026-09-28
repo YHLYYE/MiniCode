@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def build_system_prompt(skill_index: str = "", claude_md: str = "",
-                        routing_hint: str = "") -> str:
+                        session_summary: str = "", routing_hint: str = "") -> str:
     """Build the system prompt with static and dynamic sections.
 
     The static section contains identity, safety rules, and core loop
@@ -61,6 +61,12 @@ When the task is complete, provide a final answer without calling tools.
 - Working Directory: {Path.cwd()}
 - Date: {datetime.now().strftime('%Y-%m-%d')}
 """)
+
+    # Previous session summary (written by the REPL on exit).
+    if session_summary:
+        dynamic_parts.append(
+            f"## Previous Session\n{session_summary}"
+        )
 
     # Per-task routing hint — MUST stay last (see docstring).
     if routing_hint:

@@ -118,8 +118,11 @@ class RuleFilter:
 class ToolSelfCheck:
     """Second line — tool-specific parameter validation.
 
-    Checks for output redirection in Bash commands and verifies
-    commands are in the allowlist for medium-risk operations.
+    Bash gets its own finer-grained rule (whitelisted read-only commands pass,
+    everything else goes up). Every other tool that declares
+    `is_destructive = True` (Write / Edit) is pushed to at least MEDIUM so it
+    reaches L3 — previously they scored LOW here and were auto-approved, which
+    meant the four-layer chain only ever applied to Bash.
     """
 
     COMMAND_WHITELIST: set[str] = {
@@ -127,7 +130,8 @@ class ToolSelfCheck:
         "grep", "find", "which", "pwd", "echo", "date",
     }
 
-    def check(self, tool_call: ToolCall) -> RiskLevel:
+    def check(self, tool_call: ToolCall,
+              is_destructive: bool = False) -> RiskLevel:
         if tool_call.name == "Bash":
             command = tool_call.input.get("command", "")
 
@@ -139,6 +143,13 @@ class ToolSelfCheck:
             base = command.strip().split()[0] if command.strip() else ""
             if base and base not in self.COMMAND_WHITELIST:
                 return RiskLevel.MEDIUM
+
+            return RiskLevel.LOW
+
+        # 非 Bash 的破坏性工具（Write / Edit）：必须过 L3 风险分类，
+        # 不能在这里拿 LOW 直接放行。
+        if is_destructive:
+            return RiskLevel.MEDIUM
 
         return RiskLevel.LOW
 
@@ -215,13 +226,18 @@ class PermissionManager:
         self.self_check = ToolSelfCheck()
         self.ai_classifier = AIRiskClassifier(model)
 
-    async def authorize(self, tool_call: ToolCall) -> bool:
-        """Run through all security layers. Returns True if allowed."""
+    async def authorize(self, tool_call: ToolCall,
+                        is_destructive: bool = False) -> bool:
+        """Run through all security layers. Returns True if allowed.
+
+        `is_destructive` comes from the Tool object (the loop has it, the
+        ToolCall doesn't).
+        """
         # L1: Rule filter — raises SecurityBlock on danger
         self.rule_filter.check(tool_call)
 
         # L2: Tool self-check
-        risk = self.self_check.check(tool_call)
+        risk = self.self_check.check(tool_call, is_destructive=is_destructive)
         if risk == RiskLevel.LOW:
             return True
 
@@ -249,6 +265,11 @@ Input: {json.dumps(tool_call.input, indent=2)[:300]}
             response = await asyncio.to_thread(input, "Execute? [y/N]: ")
             return response.strip().lower() == "y"
         except (EOFError, KeyboardInterrupt):
+            return False
+        except Exception:
+            # stdin 被重定向或关闭时（非交互运行、管道输入）input() 抛 OSError。
+            # L4 必须 fail-closed：问不到人 = 不允许，不能让异常把任务打崩。
+            print("[无法获取人工确认（stdin 不可读）→ 按 fail-closed 拒绝执行]")
             return False
 
 

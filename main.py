@@ -33,6 +33,7 @@ from core.tools.base import SkillTool, RecallMemoryTool, RememberTool
 from capabilities.skill import SkillSystem
 from capabilities.memory import MemoryManager
 from capabilities.multi_agent import AgentTool
+from capabilities.compression import summarize_messages
 from capabilities.security import resolve_tools_for_mode, ExecutionMode
 from prompt.system_prompt import build_system_prompt
 from session_store import SessionStore
@@ -65,7 +66,11 @@ def _build_tools(mode: str, config: Config):
             model_adapter=ModelAdapter(config.model),
             system_prompt=system_prompt,
             max_turns=max_turns,
-            max_cost_usd=config.max_cost_usd,
+            # 子 Agent 有独立账本；父级会把它们的用量收回去
+            # （AgentTool.drain_usage → LoopState.add_external_usage）。
+            # 这里给的是「单个子 Agent」的额度，取总预算的 1/4：
+            # team 模式最多 3 个子 Agent，加上主 Agent 自己正好 4 份。
+            max_cost_usd=max(0.1, config.max_cost_usd / 4),
             memory_manager=memory_manager,  # project-scoped memory sharing
         )
 
@@ -92,6 +97,7 @@ def _build_tools(mode: str, config: Config):
         return build_system_prompt(
             skill_index=skill_system.get_index_for_system_prompt(),
             claude_md=memory_manager.load_claude_md(),
+            session_summary=memory_manager.load_session_summary(),
             routing_hint=skill_system.routing_hint(task, top_k=3),
         )
 
@@ -180,6 +186,23 @@ def _print_header(config, mode, max_turns, max_cost):
     print("=" * 60)
 
 
+def _persist_session(loop, store: SessionStore, memory_manager):
+    """退出前落盘：会话 JSON + 规则式摘要。
+
+    摘要下次启动时会注入 System Prompt 的 `## Previous Session` 段
+    （见 `MemoryManager.load_session_summary`）。写失败不能挡住退出。
+    """
+    if loop.state is None:
+        return
+    store.save(loop.state)
+    try:
+        memory_manager.record_session_summary(
+            summarize_messages(loop.state.messages)
+        )
+    except Exception:
+        pass
+
+
 async def _interactive_repl(config, tools, system_prompt, exec_mode,
                             store: SessionStore | None = None,
                             resume_state=None, memory_manager=None,
@@ -202,8 +225,7 @@ async def _interactive_repl(config, tools, system_prompt, exec_mode,
         try:
             task = input("\n你 > ").strip()
         except (EOFError, KeyboardInterrupt):
-            if loop.state:
-                store.save(loop.state)
+            _persist_session(loop, store, memory_manager)
             print("\n再见！")
             return
 
@@ -212,8 +234,7 @@ async def _interactive_repl(config, tools, system_prompt, exec_mode,
 
         cmd = task.lower()
         if cmd in ("/exit", "/quit", "/q"):
-            if loop.state:
-                store.save(loop.state)
+            _persist_session(loop, store, memory_manager)
             print("再见！")
             return
         if cmd in ("/clear", "/reset"):

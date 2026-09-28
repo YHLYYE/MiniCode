@@ -54,6 +54,19 @@ class LoopState:
             total_cost_usd=round(self.total_cost_usd + cost, 6),
         )
 
+    def add_external_usage(self, tokens: int, cost_usd: float) -> "LoopState":
+        """累加「不落在本 loop 账本里」的用量 —— 目前是子 Agent 的消耗。
+
+        子 Agent 是独立的 AgentLoop，用量记在它自己的 state 上。父级如果
+        不收回这份用量，`--max-cost` 就只管得住主 Agent 自己，最后那行
+        「完成: N tokens, $X」也会少算。
+        """
+        return replace(
+            self,
+            total_tokens=self.total_tokens + tokens,
+            total_cost_usd=round(self.total_cost_usd + cost_usd, 6),
+        )
+
 
 @dataclass
 class TextDelta:

@@ -97,6 +97,23 @@ def test_no_routing_block_when_hint_empty():
     assert "## Task Routing" not in prompt
 
 
+def test_session_summary_sits_before_the_routing_block():
+    """上一次会话的摘要要排在路由块之前，否则会把路由块挤离末尾。"""
+    ss = _ss()
+    prompt = build_system_prompt(
+        skill_index=ss.get_index_for_system_prompt(),
+        claude_md="ctx",
+        session_summary="Files modified (1 total): a.py",
+        routing_hint=ss.routing_hint("检查一下有没有安全漏洞"),
+    )
+    dynamic = prompt.split(SEP)[1]
+    assert "## Previous Session" in dynamic
+    assert dynamic.index("## Previous Session") < dynamic.index("## Task Routing")
+    assert dynamic.rstrip().endswith(
+        'Load one with the Skill tool: name="<skill-name>".'
+    )
+
+
 # ── AgentLoop 侧：每任务重建 ──
 
 class _Chunk:

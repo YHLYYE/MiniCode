@@ -5,6 +5,7 @@ from pathlib import Path
 from capabilities.security import (
     RuleFilter, AIRiskClassifier, SecurityBlock, RiskLevel,
 )
+from capabilities.security import PermissionManager, ToolSelfCheck
 from core.tools.base import ToolCall
 
 
@@ -102,3 +103,53 @@ async def test_classifier_invalid_risk_fails_closed():
 
     c = AIRiskClassifier(model=UppercaseModel())
     assert await c.classify(ToolCall("Bash", {"command": "x"})) == RiskLevel.HIGH
+
+
+# ── 破坏性工具必须进入 L3，不能拿 LOW 直接放行 ──
+
+class _CountingRiskModel:
+    """记录被调用次数，返回 low 风险（避免触发 L4 人工确认）。"""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def chat(self, **kwargs):
+        self.calls += 1
+        return '{"risk": "low", "reason": "test"}'
+
+
+def test_self_check_escalates_destructive_tools():
+    sc = ToolSelfCheck()
+    assert sc.check(ToolCall("Write", {"file_path": "a.py"}),
+                    is_destructive=True) == RiskLevel.MEDIUM
+    assert sc.check(ToolCall("Edit", {"file_path": "a.py"}),
+                    is_destructive=True) == RiskLevel.MEDIUM
+    # 只读工具不受影响
+    assert sc.check(ToolCall("Read", {"file_path": "a.py"})) == RiskLevel.LOW
+
+
+@pytest.mark.asyncio
+async def test_write_reaches_ai_classifier_but_read_does_not():
+    """Write 此前在 L2 拿 LOW 就自动放行，L3/L4 只对 Bash 生效。"""
+    model = _CountingRiskModel()
+    pm = PermissionManager(model=model)
+
+    assert await pm.authorize(ToolCall("Read", {"file_path": "a.py"})) is True
+    assert model.calls == 0, "只读工具不该调用 AI 分类器"
+
+    assert await pm.authorize(ToolCall("Write", {"file_path": "a.py"}),
+                              is_destructive=True) is True
+    assert model.calls == 1, "写文件必须过一次 AI 风险分类"
+
+
+@pytest.mark.asyncio
+async def test_edit_reaches_human_approval_when_classifier_says_high():
+    """L3 判高风险 → 进入 L4 人工确认；无输入时 fail-closed 拒绝。"""
+    class HighModel:
+        async def chat(self, **kwargs):
+            return '{"risk": "high", "reason": "writes code"}'
+
+    pm = PermissionManager(model=HighModel())
+    # pytest 下 stdin 为 EOF → _request_approval 捕获 EOFError → False
+    assert await pm.authorize(ToolCall("Edit", {"file_path": "a.py"}),
+                              is_destructive=True) is False

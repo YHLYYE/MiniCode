@@ -284,35 +284,42 @@ class AgentLoop:
             async def run_one(tool_name, tool_input, tool_call_id):
                 """执行单个工具，错误内部处理。
 
-                返回 (name, call_id, input, result)。input 一并带出，是因为
+                返回 (name, call_id, input, result, usage)。input 一并带出，是因为
                 tool_call_id 可能为空（部分 provider 不给 id），靠 id 反查 input
-                会让多条调用互相覆盖。
+                会让多条调用互相覆盖。usage 是工具自己报告的额外用量
+                （子 Agent 的 token / 成本），在并发里不能直接改 self._state，
+                所以带出来、回到串行段再累加。
                 """
                 tool = self._tools.get(tool_name)
                 if tool is None:
-                    return (tool_name, tool_call_id, tool_input,
+                    return (tool_name, tool_call_id, tool_input, None,
                             f"Error: Tool '{tool_name}' not found. "
                             f"Available: {list(self._tools.keys())}")
                 try:
                     # Security check before execution（fail-closed：False 拒绝执行）
                     tc = ToolCall(tool_name, tool_input)
-                    if not await self._permission.authorize(tc):
+                    if not await self._permission.authorize(
+                        tc, getattr(tool, "is_destructive", False)
+                    ):
                         result = "Permission denied by user."
                     else:
                         result = await tool.execute(**tool_input)
                         # 截断超长结果，防止单条工具输出塞爆上下文
                         result = truncate_result(result)
-                    return (tool_name, tool_call_id, tool_input, result)
+                    # 工具自己报告的用量（目前只有 AgentTool 会实现）
+                    drain = getattr(tool, "drain_usage", None)
+                    usage = drain() if callable(drain) else None
+                    return (tool_name, tool_call_id, tool_input, usage, result)
                 except SecurityBlock as e:
-                    return (tool_name, tool_call_id, tool_input,
+                    return (tool_name, tool_call_id, tool_input, None,
                             f"Security blocked: {e}")
                 except Exception as e:
                     tool_errors.append(ToolError(tool_name, str(e)))
-                    return (tool_name, tool_call_id, tool_input,
+                    return (tool_name, tool_call_id, tool_input, None,
                             f"Tool error: {e}")
 
             # 分组执行：并发安全工具 gather 并行；遇到不安全的先 drain 再串行
-            executed = []  # (tool_name, tool_call_id, input, result)，保持原顺序
+            executed = []  # (tool_name, tool_call_id, input, usage, result)，保持原顺序
             batch = []
             for tool_name, tool_input, tool_call_id in tool_calls:
                 tool = self._tools.get(tool_name)
@@ -334,8 +341,14 @@ class AgentLoop:
                 executed.extend(await asyncio.gather(*(run_one(*b) for b in batch)))
 
             # 按原顺序回流结果 + 集成回调 + 追加 tool 消息
-            for tool_name, tool_call_id, tool_input, result in executed:
+            for tool_name, tool_call_id, tool_input, usage, result in executed:
                 yield ToolResult(tool_name, result)
+
+                # 子 Agent 的 token / 成本累加进父级账本 —— 否则 --max-cost
+                # 只管得住主 Agent，最后的用量报告也会少算。预算检查统一在
+                # 主循环下一轮开头做，这里只记账。
+                if usage is not None:
+                    self._state = self._state.add_external_usage(*usage)
 
                 # ── 6.1 集成回调：追踪 active_skills / 最近编辑文件 ──
                 # Skill 激活成功 → 记入 active_skills，压缩恢复时可回灌

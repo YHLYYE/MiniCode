@@ -66,6 +66,48 @@ def _strip_orphaned_tool_calls(messages: tuple[Message, ...]) -> tuple[Message, 
     return tuple(out)
 
 
+def summarize_messages(messages: tuple[Message, ...]) -> str:
+    """规则式摘要：从消息历史里抽出「改过哪些文件 / 跑过哪些命令 / 出过哪些错」。
+
+    纯本地、零 API 成本 —— 压缩触发时上下文已经满了，调不动模型；
+    会话结束时用它生成跨会话摘要也一样。
+    """
+    file_tools: list[str] = []
+    commands: list[str] = []
+    errors: list[str] = []
+
+    for msg in messages:
+        content = msg.content[:500]
+        if any(word in content for word in ["Created", "Updated", "Edited"]):
+            file_tools.append(content[:200])
+        elif "exit code" in content:
+            commands.append(content[:200])
+        elif "Error" in content or "error" in content.lower():
+            errors.append(content[:200])
+
+    parts = []
+    if file_tools:
+        recent = file_tools[-10:]
+        parts.append(
+            f"Files modified ({len(file_tools)} total):\n"
+            + "\n".join(f"  - {f}" for f in recent)
+        )
+    if commands:
+        recent = commands[-5:]
+        parts.append(
+            f"Commands run ({len(commands)} total):\n"
+            + "\n".join(f"  - {c}" for c in recent)
+        )
+    if errors:
+        recent = errors[-5:]
+        parts.append(
+            f"Errors ({len(errors)} total):\n"
+            + "\n".join(f"  - {e}" for e in recent)
+        )
+
+    return "\n\n".join(parts) if parts else f"({len(messages)} messages processed)"
+
+
 @dataclass
 class CompressionConfig:
     max_context_tokens: int = 60_000  # DeepSeek V3 64K window, leave 4K margin
@@ -192,40 +234,7 @@ class ContextCompressor:
         Extracts: file modifications, shell commands, and errors.
         Falls back gracefully when LLM is unavailable.
         """
-        file_tools: list[str] = []
-        commands: list[str] = []
-        errors: list[str] = []
-
-        for msg in messages:
-            content = msg.content[:500]
-            if any(word in content for word in ["Created", "Updated", "Edited"]):
-                file_tools.append(content[:200])
-            elif "exit code" in content:
-                commands.append(content[:200])
-            elif "Error" in content or "error" in content.lower():
-                errors.append(content[:200])
-
-        parts = []
-        if file_tools:
-            recent = file_tools[-10:]
-            parts.append(
-                f"Files modified ({len(file_tools)} total):\n"
-                + "\n".join(f"  - {f}" for f in recent)
-            )
-        if commands:
-            recent = commands[-5:]
-            parts.append(
-                f"Commands run ({len(commands)} total):\n"
-                + "\n".join(f"  - {c}" for c in recent)
-            )
-        if errors:
-            recent = errors[-5:]
-            parts.append(
-                f"Errors ({len(errors)} total):\n"
-                + "\n".join(f"  - {e}" for e in recent)
-            )
-
-        return "\n\n".join(parts) if parts else f"({len(messages)} messages processed)"
+        return summarize_messages(messages)
 
     # ── T4: Autocompact — last resort full-session compression ──
 
