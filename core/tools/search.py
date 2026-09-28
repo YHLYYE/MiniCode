@@ -3,6 +3,7 @@
 These fill a core coding-agent gap: without them the model can only Read
 whole files and has no way to search the codebase.
 """
+import asyncio
 import glob
 import re
 from pathlib import Path
@@ -44,6 +45,10 @@ class GrepTool(Tool):
     is_concurrency_safe = True
 
     async def execute(self, pattern: str, path: str = ".") -> str:
+        # 文件遍历 + 读取是阻塞 I/O → 丢线程池，让并发搜索真正并行
+        return await asyncio.to_thread(self._search, pattern, path)
+
+    def _search(self, pattern: str, path: str) -> str:
         root = Path(path)
         if not root.exists():
             return f"Error: path not found: {path}"
@@ -99,6 +104,9 @@ class GlobTool(Tool):
     is_concurrency_safe = True
 
     async def execute(self, pattern: str, path: str = ".") -> str:
+        return await asyncio.to_thread(self._glob, pattern, path)
+
+    def _glob(self, pattern: str, path: str) -> str:
         root = Path(path)
         if not root.exists():
             return f"Error: path not found: {path}"

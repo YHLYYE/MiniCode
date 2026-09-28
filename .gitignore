@@ -39,6 +39,9 @@ desktop.ini
 .env
 .minicode/
 
+# --- 真实运行报告（benchmarks/run_real.py 生成，含真实对话，不入库）---
+reports/
+
 # --- 个人隐私文件（简历草稿、联系方式）---
 docs/resume_*.md
 docs/plans/

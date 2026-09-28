@@ -226,37 +226,62 @@ class AgentLoop:
                 yield DoneEvent(self._state)
                 return
 
-            # ── 6. Execute tools sequentially ──
+            # ── 6. Execute tools（并发安全工具并行，其余串行）──
             tool_errors: list[ToolError] = []
-            for tool_name, tool_input, tool_call_id in tool_calls:
+            tool_input_by_id = {tc[2]: tc[1] for tc in tool_calls}
+
+            async def run_one(tool_name, tool_input, tool_call_id):
+                """执行单个工具，错误内部处理，返回 (name, call_id, result)。"""
                 tool = self._tools.get(tool_name)
                 if tool is None:
-                    result = f"Error: Tool '{tool_name}' not found. Available: {list(self._tools.keys())}"
-                    yield ToolResult(tool_name, result)
+                    return (tool_name, tool_call_id,
+                            f"Error: Tool '{tool_name}' not found. "
+                            f"Available: {list(self._tools.keys())}")
+                try:
+                    # Security check before execution（fail-closed：False 拒绝执行）
+                    tc = ToolCall(tool_name, tool_input)
+                    if not await self._permission.authorize(tc):
+                        result = "Permission denied by user."
+                    else:
+                        result = await tool.execute(**tool_input)
+                        # 截断超长结果，防止单条工具输出塞爆上下文
+                        if len(result) > MAX_RESULT_CHARS:
+                            original = len(result)
+                            result = (
+                                result[:MAX_RESULT_CHARS - 1000]
+                                + f"\n...[省略 {original - MAX_RESULT_CHARS} 字符]...\n"
+                                + result[-500:]
+                            )
+                    return (tool_name, tool_call_id, result)
+                except SecurityBlock as e:
+                    return (tool_name, tool_call_id, f"Security blocked: {e}")
+                except Exception as e:
+                    tool_errors.append(ToolError(tool_name, str(e)))
+                    return (tool_name, tool_call_id, f"Tool error: {e}")
+
+            # 分组执行：并发安全工具 gather 并行；遇到不安全的先 drain 再串行
+            executed = []  # (tool_name, tool_call_id, result)，保持原顺序
+            batch = []
+            for tool_name, tool_input, tool_call_id in tool_calls:
+                tool = self._tools.get(tool_name)
+                if tool is not None and tool.is_concurrency_safe:
+                    batch.append((tool_name, tool_input, tool_call_id))
                 else:
-                    try:
-                        # Security check before execution（fail-closed：False 拒绝执行）
-                        tc = ToolCall(tool_name, tool_input)
-                        if not await self._permission.authorize(tc):
-                            result = "Permission denied by user."
-                        else:
-                            result = await tool.execute(**tool_input)
-                            # 截断超长结果，防止单条工具输出塞爆上下文
-                            if len(result) > MAX_RESULT_CHARS:
-                                original = len(result)
-                                result = (
-                                    result[:MAX_RESULT_CHARS - 1000]
-                                    + f"\n...[省略 {original - MAX_RESULT_CHARS} 字符]...\n"
-                                    + result[-500:]
-                                )
-                        yield ToolResult(tool_name, result)
-                    except SecurityBlock as e:
-                        result = f"Security blocked: {e}"
-                        yield ToolResult(tool_name, result)
-                    except Exception as e:
-                        result = f"Tool error: {e}"
-                        tool_errors.append(ToolError(tool_name, str(e)))
-                        yield ToolResult(tool_name, result)
+                    if batch:
+                        executed.extend(await asyncio.gather(
+                            *(run_one(*b) for b in batch)
+                        ))
+                        batch = []
+                    executed.append(
+                        await run_one(tool_name, tool_input, tool_call_id)
+                    )
+            if batch:
+                executed.extend(await asyncio.gather(*(run_one(*b) for b in batch)))
+
+            # 按原顺序回流结果 + 集成回调 + 追加 tool 消息
+            for tool_name, tool_call_id, result in executed:
+                yield ToolResult(tool_name, result)
+                tool_input = tool_input_by_id.get(tool_call_id, {})
 
                 # ── 6.1 集成回调：追踪 active_skills / 最近编辑文件 ──
                 # Skill 激活成功 → 记入 active_skills，压缩恢复时可回灌

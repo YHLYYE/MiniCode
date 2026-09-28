@@ -81,7 +81,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 47 个测试
+└── tests/                     # 84 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -157,8 +157,15 @@ class ContinueReason(Enum):
     PROMPT_TOO_LONG_RETRY = "ptl_retry"
     MAX_OUTPUT_TOKENS_UPGRADE = "mot_upgrade"
     MAX_OUTPUT_TOKENS_RECOVERY = "mot_recovery"
-    COMPACT_FAILURE_RETRY = "compact_retry"
 ```
+
+真正落地的 5 条恢复路径（都不把错误抛给用户）：
+
+1. **工具执行失败** → 注入错误上下文回消息尾部，下一轮继续（agent_loop.py §7）
+2. **Prompt 超长** → 强制压缩后重试（`PROMPT_TOO_LONG_RETRY`）
+3. **输出 token 打满** → 静默升级 `max_output_tokens` 8K → 64K 重试一次（`MAX_OUTPUT_TOKENS_UPGRADE`）
+4. **已在 64K 仍被截断** → 注入「从断点续写」提示，最多 3 次（`MAX_OUTPUT_TOKENS_RECOVERY`）
+5. **流式网络瞬态错误** → 指数退避重试；半截输出先落盘再由续写提示接上（永久错误直接抛，fail-closed）
 
 ### 2.4 核心实现
 
@@ -402,19 +409,23 @@ class Tool(ABC):
         }
 ```
 
-### 3.2 9 个内置工具
+### 3.2 13 个内置工具
 
 | 工具 | 只读 | 并发安全 | 破坏性 | 职责 |
 |------|------|---------|--------|------|
 | Read | ✅ | ✅ | - | 读文件（通过 FilesystemBackend） |
 | Write | - | - | ✅ | 写文件（通过 FilesystemBackend） |
+| Edit | - | - | ✅ | 文件内精确字符串替换 |
 | Bash | - | - | ✅ | Shell 命令（23+ 正则 + 白名单 + 超时） |
-| WebFetch | ✅ | ✅ | - | 获取网页内容（未接入 main.py） |
-| WebSearch | ✅ | ✅ | - | 搜索引擎（未接入 main.py） |
-| TodoWrite | - | - | - | 任务列表管理（未接入 main.py） |
-| Agent | - | ✅ | - | 派发子 Agent（explore/general/team） |
+| Grep | ✅ | ✅ | - | 正则搜索文件内容 |
+| Glob | ✅ | ✅ | - | 文件名模式搜索 |
+| WebFetch | ✅ | ✅ | - | 获取网页内容（HTML→text） |
+| WebSearch | ✅ | ✅ | - | Tavily 搜索 |
+| TodoWrite | - | - | - | 任务列表管理 |
 | Skill | ✅ | ✅ | - | 加载 Skill 指令 |
 | RecallMemory | ✅ | ✅ | - | 搜索历史记忆 |
+| Remember | - | ✅ | - | 写入长期记忆 |
+| Agent | - | ✅ | - | 派发子 Agent（explore/general/team） |
 
 ### 3.3 工具执行安全包装
 

@@ -1,10 +1,17 @@
 """Web fetch and search tools"""
+import asyncio
 import json
 import os
 import re
 import urllib.request
 
 from core.tools.base import Tool
+
+
+def _urlopen(req, timeout):
+    """同步网络请求（urlopen + read），供 asyncio.to_thread 调用。"""
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read()
 
 
 class WebSearchTool(Tool):
@@ -42,8 +49,8 @@ class WebSearchTool(Tool):
                 data=payload,
                 headers={"Content-Type": "application/json"},
             )
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read())
+            raw = await asyncio.to_thread(_urlopen, req, 15)
+            data = json.loads(raw)
 
             results = data.get("results", [])[:5]
             if not results:
@@ -72,8 +79,8 @@ class WebFetchTool(Tool):
             req = urllib.request.Request(
                 url, headers={"User-Agent": "MiniCode/1.0"}
             )
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                content = resp.read().decode("utf-8", errors="replace")
+            raw = await asyncio.to_thread(_urlopen, req, 15)
+            content = raw.decode("utf-8", errors="replace")
 
             # Strip scripts and styles
             content = re.sub(

@@ -1,12 +1,12 @@
 # MiniCode — AI Coding Agent Built From Scratch
 
 > Reference: Claude Code architecture (reverse-engineered from how-claude-code-works),
-> implemented in **~2500 lines of pure Python** with **zero LangChain dependency**.
-> 47 unit tests, all passing.
+> implemented in **~3000 lines of pure Python** with **zero LangChain dependency**.
+> 84 unit tests (1 skipped), all passing.
 
 A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill routing**,
 **3-tier Memory system**, **4-tier Context Compression with measurable benchmarks**,
-**multi-agent collaboration**, and **4-layer security**.
+**concurrent tool execution**, **multi-agent collaboration**, and **4-layer security**.
 
 ---
 
@@ -14,13 +14,14 @@ A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill 
 
 | # | Feature | What it solves |
 |---|---------|---------------|
-| 1 | **While-true Agent Loop + 4 Recovery Paths** | Model is the sole decision-maker; recoverable errors don't surface to user. Failure rate from 8% → <1% |
+| 1 | **While-true Agent Loop + 4 Recovery Paths** | Model is the sole decision-maker. Recoverable errors (tool failure / prompt-too-long / output-token limit / transient stream error) are retried inside the loop instead of surfacing to the user |
 | 2 | **Multi-model Adapter (litellm)** | One codebase supports 100+ providers (Claude/DeepSeek/OpenAI/Gemini). Switch model = change 1 config line |
 | 3 | **Skill Progressive Disclosure + 2-stage Routing** | System Prompt stays constant → Prefix Cache structure naturally stable. Recall → Rank for >10 skills |
 | 4 | **3-tier Memory (procedural / episodic / profile)** | Pluggable `MemoryStore` backend, pure-Python n-gram vector search (no ChromaDB crash on Windows) |
-| 5 | **4-tier Context Compression** | Truncation → Snip → Collapse → Autocompact. **Snip 86% / Collapse 95% / Autocompact 99.95% compression ratio**. End-to-end Token cost **reduced 74.8%** |
+| 5 | **4-tier Context Compression** | Tool-layer truncation (>30K chars) → Snip (70% usage) → Collapse (85%) → Autocompact (95%). **Snip 86% / Collapse 95% / Autocompact 99.95% compression ratio**. End-to-end Token cost **reduced 74.8%** |
 | 6 | **Multi-Agent (AgentTool)** | explore / general / team modes. Child agents get isolated contexts, only return summaries. Semaphore(5) concurrency cap |
 | 7 | **4-layer Security + Plan/Normal Dual Mode** | Rule filter → Tool self-check → AI risk classifier → Human confirmation. Plan mode physically removes write tools |
+| 8 | **Concurrent Tool Execution** | Tools declaring `is_concurrency_safe` run together via `asyncio.gather`; blocking I/O (file / network / SQLite) is pushed to threads with `asyncio.to_thread`, so reading N files costs 1× latency instead of N× |
 
 ---
 
@@ -99,19 +100,23 @@ python main.py --mode plan "Refactor utils"  # Plan mode (read-only)
 python main.py --max-turns 30 --max-cost 10.0
 ```
 
-### Available Tools (7)
+### Available Tools (13)
 
 | Tool | Description |
 |------|-------------|
 | `Read` / `Write` | File I/O via pluggable `FilesystemBackend` |
+| `Edit` | Exact string replacement in a file (no whole-file rewrite) |
 | `Bash` | Shell execution with permission review |
+| `Grep` / `Glob` | Regex content search / filename-pattern search |
+| `WebSearch` / `WebFetch` | Tavily web search / page fetch with HTML→text |
+| `TodoWrite` | In-session task list |
 | `Skill` | Progressive skill activation |
 | `RecallMemory` | Cross-session experience retrieval |
 | `Remember` | Persist knowledge to long-term memory |
 | `Agent` | Sub-agent delegation (explore / general / team) |
 
-> `WebFetch` / `WebSearch` / `TodoWrite` 定义于 `core/tools/`，但未接入
-> `main.py` 的工具集；`Agent` 的 `worktree` 模式已移除（cwd 隔离未实现）。
+> `Agent` 的 `worktree` 模式已移除（cwd 隔离未实现）；子 Agent 只拿到基础工具集、
+> 不含 `Agent` 本身，所以不存在无限递归。
 
 ### Execution Modes
 
@@ -124,7 +129,7 @@ python main.py --max-turns 30 --max-cost 10.0
 
 ```bash
 python -m pytest tests/ -v
-# 47 passed in 1.35s
+# 84 passed, 1 skipped in 1.02s
 ```
 
 ---
@@ -143,7 +148,7 @@ minicode/
 │   ├── agent_loop.py           # While-true loop + state machine + recovery
 │   ├── model_adapter.py        # litellm unified Tool Use protocol
 │   ├── state.py                # LoopState (immutable, message accumulation)
-│   └── tools/                  # 7 tool implementations
+│   └── tools/                  # 13 tool implementations
 │
 ├── capabilities/               # High-level agent features
 │   ├── skill.py                # SkillSystem + progressive disclosure + routing
@@ -162,7 +167,7 @@ minicode/
 ├── skills/                     # Skill definitions (markdown)
 │   └── code_review.md          # Example skill
 │
-└── tests/                      # 47 unit tests
+└── tests/                      # 84 unit tests
 ```
 
 ---
@@ -171,7 +176,7 @@ minicode/
 
 | Decision | Rationale | Trade-off |
 |----------|-----------|-----------|
-| **No LangChain** | 2500 lines > 50K framework; every line is traceable | No automatic integration with LangSmith |
+| **No LangChain** | 3000 lines > 50K framework; every line is traceable | No automatic integration with LangSmith |
 | **Pure-Python n-gram vector search** | ChromaDB's ONNX Runtime crashes on Windows access violation; code fields (paths, errors, function names) are mostly literal duplicates anyway | No true semantic search — FAISS at ~500ms/query would be a natural next step |
 | **Rule-based Collapse/Autocompact summaries** | Context is already full when compression triggers — can't call LLM | Lower summary quality than LLM-generated |
 | **State machine is *inside* while-true** | Model is sole decision-maker, not a programmer-defined FSM | Can't predict which path the agent will take, harder to debug |

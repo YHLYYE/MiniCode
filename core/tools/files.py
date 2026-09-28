@@ -1,4 +1,5 @@
 """File read/write tools — operate through a pluggable FilesystemBackend."""
+import asyncio
 from pathlib import Path
 
 from core.tools.base import Tool
@@ -32,7 +33,8 @@ class ReadTool(Tool):
         if self._backend.is_dir(file_path):
             return f"Error: Path is a directory: {file_path}"
         try:
-            content = self._backend.read(file_path)
+            # 文件 I/O 是阻塞的 → 丢线程池，让并发读真正并行
+            content = await asyncio.to_thread(self._backend.read, file_path)
         except Exception as e:
             return f"Error reading {file_path}: {e}"
 
