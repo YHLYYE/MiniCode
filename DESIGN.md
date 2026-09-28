@@ -81,7 +81,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 113 个测试
+└── tests/                     # 116 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -863,7 +863,7 @@ class AgentTool(Tool):
         "agent_type": {
             "type": "string",
             "enum": ["explore", "general", "team"],
-            "description": "explore=只读搜索 | general=全部工具 | team=多角色并行",
+            "description": "explore=只读搜索 | general=全部工具 | team=研究→编码→验证流水线",
         },
     }
     is_concurrency_safe = True

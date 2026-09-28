@@ -2,7 +2,7 @@
 
 > Reference: Claude Code architecture (reverse-engineered from how-claude-code-works),
 > implemented in **~3000 lines of pure Python** with **zero LangChain dependency**.
-> 113 unit tests (1 skipped), all passing.
+> 116 unit tests (1 skipped), all passing.
 
 A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill routing**,
 **3-tier Memory system**, **4-tier Context Compression with measurable benchmarks**,
@@ -19,7 +19,7 @@ A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill 
 | 3 | **Skill Progressive Disclosure + 2-stage Routing** | System Prompt stays constant → Prefix Cache structure naturally stable. Recall → Rank for >10 skills |
 | 4 | **3-tier Memory (procedural / episodic / profile)** | Pluggable `MemoryStore` backend, pure-Python n-gram vector search (no ChromaDB crash on Windows) |
 | 5 | **4-tier Context Compression** | Tool-layer truncation (>30K chars) → Snip (70% usage) → Collapse (85%) → Autocompact (95%). **Snip 86% / Collapse 95% / Autocompact 99.95% compression ratio**. End-to-end Token cost **reduced 74.8%** |
-| 6 | **Multi-Agent (AgentTool)** | explore / general / team modes. Child agents get isolated contexts, only return summaries. Semaphore(5) concurrency cap |
+| 6 | **Multi-Agent (AgentTool)** | explore (read-only) / general (full) / team = **research → coding → testing pipeline**, each step fed the previous step's output. Roles are tool-scoped (research/testing cannot write files). Child agents get isolated contexts and return only summaries. Semaphore(5) cap |
 | 7 | **4-layer Security + Plan/Normal Dual Mode** | Rule filter → Tool self-check → AI risk classifier → Human confirmation. Plan mode physically removes write tools |
 | 8 | **Concurrent Tool Execution** | Tools declaring `is_concurrency_safe` run together via `asyncio.gather`; blocking I/O (file / network / SQLite) is pushed to threads with `asyncio.to_thread`, so reading N files costs 1× latency instead of N× |
 
@@ -129,7 +129,7 @@ python main.py --max-turns 30 --max-cost 10.0
 
 ```bash
 python -m pytest tests/ -v
-# 113 passed, 1 skipped in 1.02s
+# 116 passed, 1 skipped in 0.92s
 ```
 
 ---
@@ -167,7 +167,7 @@ minicode/
 ├── skills/                     # Skill definitions (markdown)
 │   └── code_review.md          # Example skill
 │
-└── tests/                      # 113 unit tests
+└── tests/                      # 116 unit tests
 ```
 
 ---

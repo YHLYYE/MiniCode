@@ -5,7 +5,7 @@ Core insight: Sub-agents reuse the same turn engine with different params.
 
 Collaboration modes:
 - explore / general: single sub-agent with toolset filter
-- team: coordinator decomposes task → parallel role sub-agents → merge
+- team: research → coding → testing pipeline, each step fed the previous output
 """
 
 import asyncio
@@ -35,7 +35,8 @@ class AgentTool(Tool):
         "agent_type": {
             "type": "string",
             "enum": ["explore", "general", "team"],
-            "description": "explore | general | team",
+            "description": "explore (read-only search) | general (full toolset) "
+                           "| team (research → coding → testing pipeline)",
         },
     }
     is_concurrency_safe = True
@@ -61,8 +62,18 @@ class AgentTool(Tool):
         },
     }
 
-    # Team mode roles — coordinator dispatches to these in parallel
+    # Team mode roles — 串行流水线：研究 → 编码 → 验证
+    # 角色之间是有依赖的，并行没有意义：testing 在 coding 写完之前开测，
+    # 测的是改之前的代码。
     TEAM_ROLES = ["research", "coding", "testing"]
+
+    # 每个角色只拿该拿的工具。此前三个角色都拿全量工具，
+    # 于是 research 和 testing 也能写文件，而它们和 coding 是同一批文件。
+    TEAM_ROLE_TOOLS: dict[str, list[str] | None] = {
+        "research": ["Read", "Grep", "Glob", "WebSearch", "WebFetch"],
+        "coding": None,  # None = 全部工具（唯一能写文件的角色）
+        "testing": ["Read", "Grep", "Glob", "Bash"],
+    }
 
     _semaphore = asyncio.Semaphore(5)  # Max concurrent sub-agents
 
@@ -87,14 +98,15 @@ class AgentTool(Tool):
             f"{result['tokens']} tokens]\n\n{result['output']}"
         )
 
-    # ── Team mode: coordinator + parallel role sub-agents ──
+    # ── Team mode: research → coding → testing pipeline ──
 
     async def _run_team(self, task: str) -> str:
-        """Coordinator decomposes task → parallel role sub-agents → merge results.
+        """Three-role pipeline: research → coding → testing.
 
-        Uses 3 role sub-agents (research/coding/testing) running in parallel,
-        each with a role-specific system prompt. Merges their outputs into
-        a coordinated result summary.
+        Each role is a sub-agent with an isolated context window that returns
+        only a summary. Each step receives the previous step's output, so the
+        testing step verifies the code the coding step just wrote. Roles also
+        get role-scoped tools — research/testing cannot write files.
         """
         role_prompts = {
             "research": (
@@ -112,27 +124,40 @@ class AgentTool(Tool):
             ),
         }
 
-        async def run_role(role: str) -> dict:
+        results: list[dict] = []
+        upstream_role = ""
+        upstream_output = ""
+
+        for role in self.TEAM_ROLES:
+            step_task = task
+            if upstream_output:
+                step_task = (
+                    f"{task}\n\n"
+                    f"--- Output from the {upstream_role} step ---\n"
+                    f"{upstream_output}"
+                )
             profile = {
-                "tools_filter": None,
+                "tools_filter": self.TEAM_ROLE_TOOLS[role],
                 "max_turns": 10,
                 "system_prompt": role_prompts[role],
             }
             async with self._semaphore:
                 try:
-                    result = await self._run_subagent(task, profile)
-                    return {"role": role, "ok": True, **result}
+                    result = await self._run_subagent(step_task, profile)
+                    entry = {"role": role, "ok": True, **result}
                 except Exception as e:
-                    return {"role": role, "ok": False, "output": str(e),
-                            "turns": 0, "tokens": 0}
+                    entry = {"role": role, "ok": False, "output": str(e),
+                             "turns": 0, "tokens": 0}
+            results.append(entry)
+            if not entry["ok"]:
+                break  # 上一步失败 → 后面的步骤没有输入可接
+            upstream_role, upstream_output = role, entry["output"]
 
-        # Run all roles in parallel
-        results = await asyncio.gather(
-            *(run_role(role) for role in self.TEAM_ROLES)
-        )
-
-        # Merge into coordinated summary
-        lines = [f"[Agent Team: {len(results)} roles, task: {task[:80]}]\n"]
+        # Merge into a sequential summary (每一步都标出是否成功)
+        lines = [
+            f"[Agent Team: {len(results)}/{len(self.TEAM_ROLES)} steps, "
+            f"task: {task[:80]}]\n"
+        ]
         for r in results:
             status = "✓" if r["ok"] else "✗"
             lines.append(f"\n## {r['role']} {status} ({r['turns']} turns)")
