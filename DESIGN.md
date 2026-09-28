@@ -131,7 +131,7 @@ QueryEngine（外层：会话生命周期）
           ├── 构建 API 请求
           ├── 流式调用 + StreamingToolExecutor
           ├── 工具结果回流
-          └── 5 种恢复路径 → continue/exit
+          └── 4 条恢复路径 → continue/exit
 ```
 
 ### 2.2 State 对象（不可变）
@@ -149,7 +149,7 @@ class LoopState:
     active_skills: tuple[str, ...]      # 当前活跃的 Skill 名称
 ```
 
-### 2.3 5 种恢复路径
+### 2.3 4 条恢复路径
 
 ```python
 class ContinueReason(Enum):
@@ -159,13 +159,12 @@ class ContinueReason(Enum):
     MAX_OUTPUT_TOKENS_RECOVERY = "mot_recovery"
 ```
 
-真正落地的 5 条恢复路径（都不把错误抛给用户）：
+真正落地的 4 条恢复路径（都不把错误抛给用户）：
 
 1. **工具执行失败** → 注入错误上下文回消息尾部，下一轮继续（agent_loop.py §7）
 2. **Prompt 超长** → 强制压缩后重试（`PROMPT_TOO_LONG_RETRY`）
-3. **输出 token 打满** → 静默升级 `max_output_tokens` 8K → 64K 重试一次（`MAX_OUTPUT_TOKENS_UPGRADE`）
-4. **已在 64K 仍被截断** → 注入「从断点续写」提示，最多 3 次（`MAX_OUTPUT_TOKENS_RECOVERY`）
-5. **流式网络瞬态错误** → 指数退避重试；半截输出先落盘再由续写提示接上（永久错误直接抛，fail-closed）
+3. **输出 token 打满** → 内部三档升级：先把 `max_output_tokens` 8K → 64K 静默重试一次；仍被截断则注入「从断点续写」提示，最多 3 次；两档都用尽才放弃（`MAX_OUTPUT_TOKENS_UPGRADE` / `MAX_OUTPUT_TOKENS_RECOVERY`）
+4. **流式网络瞬态错误** → 指数退避重试；半截输出先落盘再由续写提示接上（永久错误直接抛，fail-closed）
 
 ### 2.4 核心实现
 
@@ -501,17 +500,18 @@ class BashTool(Tool):
 ```
 System Prompt（极简索引，永不变化 → Prompt Cache 命中）
   │
-  │ 模型调用 activate_skill("code_review")
+  │ 模型调用 Skill(name="code-review")
   ▼
 Tool Result（追加到消息尾部）
   │
-  │ <skill name="code_review">
+  │ <skill name="code-review">
   │ You are a code reviewer...
   │ Allowed tools: Read, Bash, WebSearch
   │ </skill>
   │
   │ → System Prompt 一个字不变
-  │ → Prefix Cache 100% 命中
+  │ → 静态前缀稳定，服务端 Prefix Cache 可复用
+  │   （命中率由 provider 决定，本项目未单独埋点）
 ```
 
 ### 4.2 Skill 定义格式
@@ -547,7 +547,7 @@ class SkillSystem:
         lines = ["Available skills:"]
         for skill in self._registry.values():
             lines.append(f"- {skill.name}: {skill.description}")
-        lines.append("\nCall activate_skill(name) to load full instructions.")
+        lines.append('\nCall the Skill tool with name="<skill-name>" to load full instructions.')
         return "\n".join(lines)
 
     async def activate(self, skill_name: str) -> str:
@@ -1277,10 +1277,11 @@ class SessionStore:
 ## 附录 B: 面试核心论述
 
 1. **"为什么 Agent Loop 用 while-true 而不是状态机？"**
-   → 模型是唯一决策者。状态机的状态转换是人预设的，while-true 让模型通过 tool_use/end_turn/max_tokens 自主判断。7 种恢复路径不是状态机，是容错策略。
+   → 模型是唯一决策者。状态机的状态转换是人预设的，while-true 让模型通过 tool_use/end_turn/max_tokens 自主判断。4 条恢复路径不是状态机，是容错策略。
 
-2. **"Prompt Cache 命中率怎么从 45% 提到 85%？"**
-   → System Prompt 静态段永不变化（Skill 索引一行一个、不加完整指令），动态段放会话信息。Skill 指令通过 activate_skill 工具返回，作为 Tool Response 追加到消息尾部。静态/动态边界精确定义。
+2. **"Prompt Cache 你怎么保证前缀稳定？"**
+   → System Prompt 静态段永不变化（Skill 索引一行一个、不带完整指令），动态段放会话信息，两者用分隔标记切开。Skill 完整指令不进 System Prompt，而是通过 Skill 工具返回、作为 Tool Response 追加到消息尾部。这样前缀只由静态段决定，不随「激活了哪个 Skill」而变。
+   ⚠️ 本项目**没有埋点测过命中率**，不要报「从 45% 提到 85%」「提升 40%」这类数字；要讲就讲上面这个机制。
 
 3. **"记忆系统为什么不做自进化闭环？"**
    → 模型参数冻结的情况下，真正的"学习"不可能。我们选择务实方案：CLAUDE.md（文件持久化）+ Autocompact 摘要（压缩存留）+ n-gram 向量检索（按需）。评估 ChromaDB 后发现其默认 ONNX embedding 在 Windows 崩溃，故自研纯 Python n-gram 哈希向量 + 余弦相似度。承认技术边界本身展示工程判断力。
