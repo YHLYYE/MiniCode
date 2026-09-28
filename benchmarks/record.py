@@ -1,6 +1,8 @@
-"""Token 成本基准测试 — 四级压缩的实测压缩比
+"""Token 成本基准测试 — 三级压缩的实测压缩比
 
-测量 ContextCompressor 四级压缩各自能把 N token 压到多少。
+测量 ContextCompressor 三级降级链各自能把 N token 压到多少。
+（单条工具结果的截断不在这一链里：它在工具执行路径上按「单条结果的绝对
+长度」触发，跟这里的「全局用量占比」是两种触发语义，见 compression.py 头注释。）
 用模拟长会话（读大文件 + 跑命令）构造 ~60K token，触发各级压缩。
 
 不消耗真实 API — 纯本地压缩算法测量，可重复、零成本。
@@ -95,7 +97,7 @@ def build_long_session(num_files: int = 30, lines_per_file: int = 40) -> LoopSta
 
 
 async def benchmark_compression():
-    """测量四级压缩各自的压缩比。"""
+    """测量三级降级链各自的压缩比。"""
     compressor = ContextCompressor(CompressionConfig(max_context_tokens=60_000))
 
     # 构造长会话（200 个文件，接近真实 60K 压缩阈值）
@@ -109,19 +111,19 @@ async def benchmark_compression():
     print("-" * 64)
     print(f"{'原始（无压缩）':<22} {len(state.messages):>8} {tokens_before:>10,} {'—':>10}")
 
-    # T2: Snip（工具输出占位符替换）
+    # T1: Snip（工具输出占位符替换）
     snip_state = await compressor._snip(state)
     tokens_snip = count_tokens(snip_state.messages)
     print(f"{'Snip（占位替换）':<22} {len(snip_state.messages):>8} "
           f"{tokens_snip:>10,} {_ratio(tokens_before, tokens_snip):>10}")
 
-    # T3: Collapse（掐头去尾 + 摘要）
+    # T2: Collapse（掐头去尾 + 摘要）
     collapse_state = await compressor._collapse(state)
     tokens_collapse = count_tokens(collapse_state.messages)
     print(f"{'Collapse（掐头去尾）':<22} {len(collapse_state.messages):>8} "
           f"{tokens_collapse:>10,} {_ratio(tokens_before, tokens_collapse):>10}")
 
-    # T4: Autocompact（全量压缩）
+    # T3: Autocompact（全量压缩）
     compact_state = await compressor.force_autocompact(state)
     tokens_compact = count_tokens(compact_state.messages)
     print(f"{'Autocompact（全量压缩）':<22} {len(compact_state.messages):>8} "
@@ -145,13 +147,14 @@ async def benchmark_compression():
 def _ratio(before: int, after: int) -> str:
     if before == 0:
         return "—"
-    return f"{after/before:.1%}"
+    return f"{after/before:.2%}"
 
 
 def _percent(before: int, after: int) -> str:
     if before == 0:
         return "—"
-    return f"{(before - after) / before:.0%}"
+    # 两位小数：README / 文档里引用的是 99.95%，别在脚本里被四舍五入成 100%
+    return f"{(before - after) / before:.2%}"
 
 
 if __name__ == "__main__":

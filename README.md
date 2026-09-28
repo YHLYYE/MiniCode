@@ -5,7 +5,7 @@
 > 144 unit tests (1 skipped), all passing.
 
 A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill routing**,
-**3-tier Memory system**, **4-tier Context Compression with measurable benchmarks**,
+**3-tier Memory system**, **3-tier Context Compression with measurable benchmarks**,
 **concurrent tool execution**, **multi-agent collaboration**, and **4-layer security**.
 
 ---
@@ -18,7 +18,7 @@ A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill 
 | 2 | **Multi-model Adapter (litellm)** | One codebase supports 100+ providers (Claude/DeepSeek/OpenAI/Gemini). Switch model = change 1 config line |
 | 3 | **Skill Progressive Disclosure + 2-stage Routing** | Full skill instructions are stripped from the System Prompt (only a one-line index stays); the model loads one via the `Skill` tool and the result lands at the message tail. Every task also runs recall → rerank, and the top-k candidates are appended to the **end** of the dynamic section — so everything before them stays byte-identical and the prefix cache still hits |
 | 4 | **3-tier Memory (procedural / episodic / profile)** | Pluggable `MemoryStore` backend, pure-Python n-gram vector search (no ChromaDB crash on Windows) |
-| 5 | **4-tier Context Compression** | Tool-layer truncation (>30K chars) → Snip (70% usage) → Collapse (85%) → Autocompact (95%). **Snip 86% / Collapse 95% / Autocompact 99.95% compression ratio**. End-to-end Token cost **reduced 74.8%** |
+| 5 | **3-tier Context Compression** (+ tool-layer truncation) | Snip (70% usage) → Collapse (85%) → Autocompact (95%). **Snip 86% / Collapse 95% / Autocompact 99.95% compression ratio**. End-to-end Token cost **reduced 74.8%**. Single-result truncation happens in the tool path at >30K chars — a different trigger (one result's absolute size), so it is not counted as a tier |
 | 6 | **Multi-Agent (AgentTool)** | explore (read-only) / general (full) / team = **research → coding → testing pipeline**, each step fed the previous step's output. Roles are tool-scoped (research/testing cannot write files). Child agents get isolated contexts and return only summaries; their token/cost is drained back into the parent's budget so `--max-cost` actually covers them. Semaphore(5) cap |
 | 7 | **4-layer Security + Plan/Normal Dual Mode** | Rule filter (dangerous commands + path allowlist) → Tool self-check → AI risk classifier → Human confirmation. Every destructive tool (Bash / Write / Edit) reaches L3; whitelisted read-only Bash commands are the only thing that short-circuits. Plan mode physically removes write tools |
 | 8 | **Concurrent Tool Execution** | Tools declaring `is_concurrency_safe` run together via `asyncio.gather`; blocking I/O (file / network / SQLite) is pushed to threads with `asyncio.to_thread`, so reading N files costs 1× latency instead of N× |
@@ -155,7 +155,7 @@ minicode/
 │   ├── memory.py               # MemoryManager + 3-type MemoryStore
 │   ├── multi_agent.py          # AgentTool + team/explore modes
 │   ├── security.py             # 4-layer permission review
-│   └── compression.py          # 4-tier context compressor
+│   └── compression.py          # 3-tier context compressor + tool-layer truncation
 │
 ├── benchmarks/                 # Reproducible benchmarks
 │   ├── record.py               # Compression ratio measurement

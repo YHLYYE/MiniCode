@@ -35,7 +35,7 @@
 │         能力层（5 大模块）                 │
 │  Skill 系统 — 上下文变换器 + 按需加载      │
 │  记忆系统 — CLAUDE.md + 摘要 + n-gram 检索 │
-│  上下文压缩 — 四级降级链                   │
+│  上下文压缩 — 三级降级链（+ 工具层截断）      │
 │  多Agent协作 — AgentTool 统一路由          │
 │  安全审查 — 四层纵深防御 + Plan/Normal     │
 └─────────────────────────────────────────┘
@@ -67,7 +67,7 @@ Desktop/minicode/
 ├── capabilities/
 │   ├── skill.py               # Skill 系统（渐进式披露 + 二阶段路由）
 │   ├── memory.py              # 三类记忆 + 可插拔 MemoryStore
-│   ├── compression.py         # 四级降级链
+│   ├── compression.py         # 三级降级链
 │   ├── multi_agent.py         # AgentTool 统一路由（explore/general/team）
 │   └── security.py            # 四层纵深防御
 ├── skills/                    # Skill 定义文件
@@ -75,7 +75,7 @@ Desktop/minicode/
 ├── prompt/
 │   └── system_prompt.py       # System Prompt 组装（静态段 + 动态段 + 路由块）
 ├── benchmarks/                # 基准测试（实测量化数据）
-│   ├── record.py              # 四级压缩比
+│   ├── record.py              # 三级压缩比
 │   └── e2e.py                 # 端到端 Token 成本对比
 ├── config.py                  # 配置管理
 ├── session_store.py           # 对话持久化（--resume）
@@ -127,7 +127,7 @@ QueryEngine（外层：会话生命周期）
   ├── SessionStore 持久化
   └── 调用 →
         query()（内层：while-true 单轮执行）
-          ├── 四级压缩检查
+          ├── 三级压缩检查
           ├── 构建 API 请求
           ├── 流式调用 + StreamingToolExecutor
           ├── 工具结果回流
@@ -200,7 +200,7 @@ class AgentLoop:
 
     async def _query_loop(self, state: LoopState):
         while state.turn_count < self._max_turns:
-            # 1. 四级压缩检查
+            # 1. 三级压缩检查
             state = await self._compressor.compress_if_needed(state)
 
             # 2. 构建请求
@@ -630,15 +630,26 @@ System Prompt 里那行索引（name + description）是给模型的「廉价广
 
 ## 5. 上下文压缩
 
-### 5.1 四级降级链
+### 5.1 三级降级链（+ 工具层截断）
 
 ```
-Token 使用率
+按「整段上下文的 token 用量占比」逐级降级：
   95% → Autocompact：规则化全量摘要（不调 LLM，上下文已满时调不动）
   85% → Collapse：掐头去尾 + 中间结构化摘要
   70% → Snip：旧工具输出 → 占位符替换
-  50% → Truncation：单条结果超过 30K chars 时实时截断
 ```
+
+**Truncation 不在这条链上**，它挂在工具执行路径（`agent_loop.truncate_result`），
+触发条件是「单条结果的绝对长度 > 30K 字符」，跟全局用量占比无关。两者分开的原因：
+
+| | 三级压缩 | 工具层截断 |
+|---|---|---|
+| 触发时机 | 每轮开始前查一次全局占比 | 工具刚返回的那一刻 |
+| 防的问题 | 历史累积把窗口撑满 | 一次调用突然灌进来一大坨（如读到 2MB 日志） |
+| 代价 | 越往下越贵，Autocompact 几乎丢光历史 | 只损失一条结果的头尾 |
+
+如果把它也算成链上的一级，会给人「压到 95% 才需要截断」的错觉，
+而实际上每次工具调用都要判断——它是在最前面挡住"上下文被单条结果一次性顶满"。
 
 ### 5.2 配置
 
@@ -1294,8 +1305,8 @@ class SessionStore:
 ### Phase 3 (Day 8-10): 压缩 + 安全 ~500 行
 
 ```
-目标: 四级降级链 + 四层审查 + Plan/Normal
-- capabilities/compression.py — ContextCompressor + 四级降级
+目标: 三级降级链 + 四层审查 + Plan/Normal
+- capabilities/compression.py — ContextCompressor + 三级降级
 - capabilities/security.py    — 四层防御 + 双模式（含 AI 风险分类）
 - 完善 Bash 工具 (超时 + 三层安全)
 ```
@@ -1363,7 +1374,7 @@ class SessionStore:
 两个基准脚本，零成本可重复（不消耗真实 API）：
 
 ```bash
-python benchmarks/record.py   # 四级压缩比
+python benchmarks/record.py   # 三级压缩比
 python benchmarks/e2e.py      # 端到端 Token 成本对比
 ```
 
