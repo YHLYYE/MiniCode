@@ -18,7 +18,7 @@ A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill 
 | 2 | **Multi-model Adapter (litellm)** | One codebase supports 100+ providers (Claude/DeepSeek/OpenAI/Gemini). Switch model = change 1 config line |
 | 3 | **Skill Progressive Disclosure + 2-stage Routing** | Full skill instructions are stripped from the System Prompt (only a one-line index stays); the model loads one via the `Skill` tool and the result lands at the message tail. Every task also runs recall → rerank, and the top-k candidates are appended to the **end** of the dynamic section — so everything before them stays byte-identical and the prefix cache still hits |
 | 4 | **3-tier Memory (procedural / episodic / profile)** | Pluggable `MemoryStore` backend, pure-Python n-gram vector search (no ChromaDB crash on Windows) |
-| 5 | **3-tier Context Compression** (+ tool-layer truncation) | Snip (70% usage) → Collapse (85%) → Autocompact (95%). **Snip 86% / Collapse 95% / Autocompact 99.95% compression ratio**. End-to-end Token cost **reduced 74.8%**. Single-result truncation happens in the tool path at >30K chars — a different trigger (one result's absolute size), so it is not counted as a tier |
+| 5 | **3-tier Context Compression** (+ tool-layer truncation) | Snip (70% usage) → Collapse (85%) → Autocompact (95%). **Snip 86% / Collapse 95% / Autocompact 99.95% compression ratio**. End-to-end Token cost **reduced 63.7%**. Single-result truncation happens in the tool path at >30K chars — a different trigger (one result's absolute size), so it is not counted as a tier |
 | 6 | **Multi-Agent (AgentTool)** | explore (read-only) / general (full) / team = **research → coding → testing pipeline**, each step fed the previous step's output. Roles are tool-scoped (research/testing cannot write files). Child agents get isolated contexts and return only summaries; their token/cost is drained back into the parent's budget so `--max-cost` actually covers them. Semaphore(5) cap |
 | 7 | **4-layer Security + Plan/Normal Dual Mode** | Rule filter (dangerous commands + path allowlist) → Tool self-check → AI risk classifier → Human confirmation. Every destructive tool (Bash / Write / Edit) reaches L3; whitelisted read-only Bash commands are the only thing that short-circuits. Plan mode physically removes write tools |
 | 8 | **Concurrent Tool Execution** | Tools declaring `is_concurrency_safe` run together via `asyncio.gather`; blocking I/O (file / network / SQLite) is pushed to threads with `asyncio.to_thread`, so reading N files costs 1× latency instead of N× |
@@ -40,10 +40,17 @@ Autocompact（全量）压缩比 99.95% →   28  token
 端到端 Token 成本（模拟读 30 文件，每个 ~2000 token）
 ───────────────────────────────────
 关压缩  累计 input token  1,173,075  →  上下文超 64K 窗口 → 任务失败
-开压缩  累计 input token     296,058  →  任务成功
+开压缩  累计 input token     425,520  →  任务成功
 ───────────────────────────────────
-Token 成本降低：74.8%
+Token 成本降低：63.7%
 ```
+
+> **这个数字改过。** 早期版本的 `_snip` 按「结果大小」排序、优先裁掉最大的，
+> 省得更狠（74.8%），但代价是把工具结果整批换成占位符——模型随后就没有工作记忆了。
+> 现行版本改为**保留最近 5 条完整结果**、只裁更早的（`capabilities/compression.py` 的 `_snip`），
+> 单次压缩变弱、触发次数从 6 涨到 25，所以账面从 74.8% 掉到 63.7%。
+> **这是有意的取舍：压缩的目的是让模型还能继续干活，不是把 token 省到最低。**
+> 两个数字都可用 `python benchmarks/e2e.py` 复现，差别只在 `_snip` 那几行。
 
 ---
 
