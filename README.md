@@ -29,6 +29,10 @@ A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill 
 
 All numbers from `python benchmarks/record.py` and `python benchmarks/e2e.py`:
 
+> 这些数字可以用 `python benchmarks/verify_claims.py` 一键复核：它重跑两个基准，
+> 和 README / DESIGN / 简历里引用的数字逐个对账，**并检查已撤下的旧值没有残留**，
+> 不一致就退出码非 0。纯本地确定性计算，不调 API。
+
 ```
 Token 压缩基准（模拟长会话：读 200 个文件，~58K token）
 ───────────────────────────────────
