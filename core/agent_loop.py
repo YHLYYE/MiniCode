@@ -1,4 +1,4 @@
-"""Agent Loop core engine — while-true + 5 recovery paths
+"""Agent Loop core engine — while-true + 4 recovery paths
 
 Reference: Claude Code source architecture (how-claude-code-works analysis)
 Core principle: The model is the sole decision-maker. No state machines, no DAGs.
@@ -150,7 +150,7 @@ class AgentLoop:
             return self._system_prompt
 
     async def _query_loop(self, state: LoopState):
-        """Inner loop: per-turn execution with 5 recovery paths."""
+        """Inner loop: per-turn execution with 4 recovery paths."""
         self._state = state
         stream_retries = 0  # 本任务的流式中断重试计数（防反复断网死循环）
 
