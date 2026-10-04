@@ -10,6 +10,7 @@
 6. 压缩熔断器的计数器永远不会增加，熔断形同虚设
 7. `Tool.check_concurrency_safe(input)` 钩子从未被调用（只读类属性）
 """
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -185,12 +186,17 @@ class _ToggleTool(Tool):
 
     def __init__(self):
         self.seen = []
+        self.trace = []          # 执行轨迹：("start"/"end", q)
 
     def check_concurrency_safe(self, input: dict) -> bool:
         return bool(input.get("concurrent"))
 
     async def execute(self, q, concurrent=True):
         self.seen.append(q)
+        # 记录进入/离开，并让出事件循环 —— 这样"是否真的并行"变成可观测的
+        self.trace.append(("start", q))
+        await asyncio.sleep(0.01)
+        self.trace.append(("end", q))
         return f"ok:{q}"
 
 
@@ -233,14 +239,22 @@ class _MockModel:
 
 @pytest.mark.asyncio
 async def test_concurrency_hook_is_consulted_by_the_loop():
-    """同一轮里：safe=True 的两个并行，safe=False 的串行 —— 全部仍被执行。"""
+    """钩子被真正采纳：相邻的两个 safe 工具并行，中间夹着的 unsafe 工具独占执行。
+
+    断言必须看**执行轨迹的重叠**，不能只看"工具都跑了、顺序对"——
+    并发与否，结果和回流顺序都长一样（循环总是按原顺序回流）。
+    早先那版就是只看结果，所以**把钩子改回读类属性它照样通过**，等于没测。
+
+    输入特意排成 a(并发) → c(并发) → b(不并发)：
+    前两个相邻会被凑进同一批；b 触发 drain，先并发跑完 a/c，再独占执行 b。
+    """
     plan = [[
         _Chunk(type="tool_use_start", name="toggle",
                input={"q": "a", "concurrent": True}, tool_call_id="c1"),
         _Chunk(type="tool_use_start", name="toggle",
-               input={"q": "b", "concurrent": False}, tool_call_id="c2"),
-        _Chunk(type="tool_use_start", name="toggle",
                input={"q": "c", "concurrent": True}, tool_call_id="c3"),
+        _Chunk(type="tool_use_start", name="toggle",
+               input={"q": "b", "concurrent": False}, tool_call_id="c2"),
         _Chunk(type="message_stop", stop_reason="end_turn", usage=_Usage()),
     ], [
         _Chunk(type="text_delta", text="done"),
@@ -252,7 +266,20 @@ async def test_concurrency_hook_is_consulted_by_the_loop():
                      system_prompt="test")
     events = [e async for e in loop.run("go")]
 
+    # 都执行了，且结果按原顺序回流
     assert sorted(tool.seen) == ["a", "b", "c"]
     results = [e for e in events if isinstance(e, ToolResult)]
-    assert [r.output for r in results] == ["ok:a", "ok:b", "ok:c"]
+    assert [r.output for r in results] == ["ok:a", "ok:c", "ok:b"]
     assert any(isinstance(e, DoneEvent) for e in events)
+
+    # ① a 与 c 必须重叠：两个 start 都出现在任一个 end 之前
+    starts = [q for phase, q in tool.trace if phase == "start"]
+    assert starts[:2] == ["a", "c"], f"a/c 没被凑进同一批：{tool.trace}"
+    first_end = next(i for i, (phase, _) in enumerate(tool.trace)
+                     if phase == "end")
+    assert first_end > 1, f"第一个 end 来得太早，说明根本没并行：{tool.trace}"
+
+    # ② b 必须独占：它的 start 紧跟着自己的 end，中间没插进别人的事件
+    i_b = tool.trace.index(("start", "b"))
+    assert tool.trace[i_b + 1] == ("end", "b"), (
+        f"b 声明了不并发，却和别人重叠了：{tool.trace}")
