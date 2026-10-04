@@ -6,14 +6,13 @@ Core principle: The model is the sole decision-maker. No state machines, no DAGs
 
 import asyncio
 import json
-from typing import AsyncIterator
 
 from core.state import (
     Message, LoopState, ContinueReason,
     TextDelta, ToolStart, ToolResult, ToolError, DoneEvent,
     BudgetExceeded,
 )
-from core.model_adapter import ModelAdapter, StreamChunk, Usage
+from core.model_adapter import ModelAdapter, Usage
 from core.tools.base import Tool, ToolCall
 from capabilities.compression import ContextCompressor
 from capabilities.memory import MemoryManager
@@ -26,6 +25,9 @@ MAX_RESULT_CHARS = 30_000  # 单条工具结果超过此值则截断（防上下
 # ── Stream retry (transient network errors) ──
 _STREAM_RETRY_MAX = 3           # 瞬态错误最大重试次数
 _STREAM_RETRY_BASE_DELAY = 1.0  # 指数退避基准延迟（秒）
+
+# ── Empty response guard ──
+_EMPTY_RESPONSE_MAX_RETRIES = 2  # 模型返回空响应时，先提醒它两次再终止
 
 
 def truncate_result(result: str) -> str:
@@ -153,6 +155,7 @@ class AgentLoop:
         """Inner loop: per-turn execution with 4 recovery paths."""
         self._state = state
         stream_retries = 0  # 本任务的流式中断重试计数（防反复断网死循环）
+        empty_response_retries = 0  # 空响应提醒计数（防空转烧 token）
 
         while self._state.turn_count < self._max_turns:
             # Increment turn counter (LoopState is immutable → replace)
@@ -270,6 +273,24 @@ class AgentLoop:
                     Message(role="assistant", content=assistant_text,
                             tool_calls=tool_calls_attachments)
                 )
+
+            # ── 4.5 Guard: empty response ──
+            # 模型偶尔会返回"既没有文本、也没有工具调用"的空响应（内容过滤、
+            # provider 抖动都可能导致）。没有这段守卫时，第 4 段什么都不会追加、
+            # 第 5 段也判不出结束，于是**一直空转到 max_turns**——实测 20 轮，
+            # 每轮都是一次真实 API 调用。这里给它两次机会，然后明确终止。
+            if not assistant_text and not tool_calls_attachments:
+                if empty_response_retries < _EMPTY_RESPONSE_MAX_RETRIES:
+                    empty_response_retries += 1
+                    self._state = self._state.add_message(Message(
+                        role="user",
+                        content=("[你的上一轮没有任何输出。请给出最终答案，"
+                                 "或调用工具继续推进。]"),
+                    ))
+                    continue
+                await self._record_task_done("terminated: empty response")
+                yield DoneEvent(self._state)
+                return
 
             # ── 5. No tool calls → task complete ──
             if not tool_calls and assistant_text:
