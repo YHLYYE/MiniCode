@@ -25,28 +25,28 @@
 ### 1.1 三层架构
 
 ```
-┌─────────────────────────────────────────┐
+┌────────────────────────────────────────────┐
 │         应用层（CLI + 配置）               │
-│  main.py — Click CLI                     │
-│  SessionStore — JSON 对话持久化           │
-└─────────────────────────────────────────┘
+│  main.py — Click CLI                       │
+│  SessionStore — JSON 对话持久化            │
+└────────────────────────────────────────────┘
                   │
-┌─────────────────────────────────────────┐
+┌────────────────────────────────────────────┐
 │         能力层（5 大模块）                 │
 │  Skill 系统 — 上下文变换器 + 按需加载      │
 │  记忆系统 — CLAUDE.md + 摘要 + n-gram 检索 │
-│  上下文压缩 — 三级降级链（+ 工具层截断）      │
+│  上下文压缩 — 三级降级链（+ 工具层截断）   │
 │  多Agent协作 — AgentTool 统一路由          │
 │  安全审查 — 四层纵深防御 + Plan/Normal     │
-└─────────────────────────────────────────┘
+└────────────────────────────────────────────┘
                   │
-┌─────────────────────────────────────────┐
-│         核心层                            │
-│  Agent Loop — while-true + 5 恢复路径     │
-│  StreamingToolExecutor — 流式并行执行      │
-│  ModelAdapter — Claude API 适配           │
-│  Tool Registry — 13 个工具                │
-└─────────────────────────────────────────┘
+┌────────────────────────────────────────────┐
+│         核心层                             │
+│  Agent Loop — while-true + 4 恢复路径      │
+│  工具执行 — 内联 run_one + 分组并发        │
+│  ModelAdapter — litellm 多模型适配         │
+│  Tool Registry — 12 个工具                 │
+└────────────────────────────────────────────┘
 ```
 
 ### 1.2 目录结构
@@ -54,14 +54,14 @@
 ```
 Desktop/minicode/
 ├── core/
-│   ├── agent_loop.py          # while-true + State + 5 恢复路径
+│   ├── agent_loop.py          # while-true + State + 4 恢复路径
 │   ├── state.py               # LoopState/Message/事件类型
 │   ├── model_adapter.py       # litellm 多模型适配（100+ 模型）
 │   └── tools/
 │       ├── base.py            # Tool ABC + fail-closed 默认值 + Skill/RecallMemory 工具
 │       ├── files.py           # Read, Write（通过 FilesystemBackend）
 │       ├── fs_backend.py      # 可插拔文件系统后端（本地/沙箱）
-│       ├── shell.py           # Bash（23+ 正则 + 白名单 + 超时）
+│       ├── shell.py           # Bash（27 条正则 + 白名单 + 超时）
 │       ├── web.py             # WebFetch, WebSearch
 │       └── task.py            # TodoWrite
 ├── capabilities/
@@ -129,7 +129,7 @@ QueryEngine（外层：会话生命周期）
         query()（内层：while-true 单轮执行）
           ├── 三级压缩检查
           ├── 构建 API 请求
-          ├── 流式调用 + StreamingToolExecutor
+          ├── 流式调用 + 工具执行（内联 run_one + 分组并发）
           ├── 工具结果回流
           └── 4 条恢复路径 → continue/exit
 ```
@@ -189,7 +189,7 @@ class AgentLoop:
         self._max_cost_usd = max_cost_usd
         self._compressor = ContextCompressor()
         self._permission = PermissionManager()
-        self._executor = StreamingToolExecutor(self._tools)
+        # 注：工具执行内联在本循环里（run_one + 分批 gather），没有独立 executor 类
 
     async def run(self, task: str):
         state = LoopState(
@@ -290,7 +290,20 @@ class AgentLoop:
         return state.add_message(msg)
 ```
 
-### 2.5 StreamingToolExecutor
+### 2.5 工具执行（设计草图 → 当前实现）
+
+> ⚠️ **下面这段是规划阶段的草图，不是当前实现。** 早期设计里有一个独立的
+> `StreamingToolExecutor` 类，实现时没有落地 —— 工具执行内联在
+> `core/agent_loop.py` 的 `_query_loop` 里（`run_one()` + 按
+> `check_concurrency_safe()` 分批 `asyncio.gather`）。
+> 保留草图是为了说明"为什么想这么做"，对照关系见下表：
+
+| 草图里的概念 | 当前实现（可核验） |
+|---|---|
+| `StreamingToolExecutor` 类 | 不存在。`core/agent_loop.py` §6 的分组循环 |
+| `process_stream()` 边流边执行 | 流完拿到 `tool_calls` 再执行（没有边收边跑） |
+| `ToolContext` | `(tool_name, tool_input, tool_call_id)` 三元组 + `run_one()` 闭包 |
+| `_pending` 任务列表 | `batch` 列表 + `asyncio.gather` |
 
 ```python
 class StreamingToolExecutor:
@@ -421,14 +434,14 @@ class Tool(ABC):
         }
 ```
 
-### 3.2 13 个内置工具
+### 3.2 12 个内置工具
 
 | 工具 | 只读 | 并发安全 | 破坏性 | 职责 |
 |------|------|---------|--------|------|
 | Read | ✅ | ✅ | - | 读文件（通过 FilesystemBackend） |
 | Write | - | - | ✅ | 写文件（通过 FilesystemBackend） |
 | Edit | - | - | ✅ | 文件内精确字符串替换 |
-| Bash | - | - | ✅ | Shell 命令（23+ 正则 + 白名单 + 超时） |
+| Bash | - | - | ✅ | Shell 命令（27 条正则 + 白名单 + 超时） |
 | Grep | ✅ | ✅ | - | 正则搜索文件内容 |
 | Glob | ✅ | ✅ | - | 文件名模式搜索 |
 | WebFetch | ✅ | ✅ | - | 获取网页内容（HTML→text） |
@@ -1354,16 +1367,20 @@ class SessionStore:
 
 ## 10. 逐层构建路线
 
+> 这一节是**当时的建设计划**，保留下来是为了说明推进顺序；
+> 里面的行数/恢复路径数/工具数是计划值，最终实现以 §1 与代码为准
+> （例如 `core/streaming_executor.py` 从未落地，工具执行最终内联进了 agent_loop）。
+
 ### Phase 1 (Day 1-3): 最小可用版 ~480 行
 
 ```
 目标: 跑通 Agent Loop + 3 个工具 (Read/Write/Bash)
-- core/agent_loop.py        — while-true + State + 5 恢复路径
+- core/agent_loop.py        — while-true + State + 恢复路径
 - core/tools/base.py         — Tool ABC
 - core/tools/files.py        — Read, Write
-- core/tools/shell.py        — Bash（23+ 正则 + 白名单）
-- core/model_adapter.py      — Claude API 适配
-- core/streaming_executor.py  — 流式并行执行
+- core/tools/shell.py        — Bash（正则 + 白名单）
+- core/model_adapter.py      — litellm 多模型适配
+- （计划中的 streaming_executor.py 未落地，工具执行内联进 agent_loop）
 - prompt/system_prompt.py    — System Prompt 组装
 - config.py                  — Config + 环境变量
 - main.py                    — CLI 入口
@@ -1414,11 +1431,11 @@ class SessionStore:
 
 | 维度 | Claude Code 源码 | MiniCode | 差异理由 |
 |------|-----------------|----------|---------|
-| 代码量 | 512,000 行 | ~2,500 行 | 教育实现，非产品 |
-| Agent Loop | while-true + 7 恢复路径 | while-true + 5 恢复路径 | 去掉 stop_hook 和 token_budget_continuation（Python SDK 不适用） |
-| 工具数 | 55+ | 13 | 覆盖核心场景，超出范围的不做 |
-| Bash 安全 | tree-sitter AST + 23+ 检查 | 23+ 正则 + 白名单 | tree-sitter 是独立项目级复杂度 |
-| Skill 加载 | 6 层来源 + 分区排序 | 3 层来源 + 全量索引 | 对 13 个工具不需要分区 |
+| 代码量 | 512,000 行 | 4,743 行（28 个 py 文件） | 教育实现，非产品 |
+| Agent Loop | while-true + 7 恢复路径 | while-true + 4 恢复路径 | 去掉 stop_hook 和 token_budget_continuation（Python SDK 不适用） |
+| 工具数 | 55+ | 12 | 覆盖核心场景，超出范围的不做 |
+| Bash 安全 | tree-sitter AST + 23+ 检查 | 27 条正则 + 白名单 | tree-sitter 是独立项目级复杂度 |
+| Skill 加载 | 6 层来源 + 分区排序 | 3 层来源 + 全量索引 | 对 12 个工具不需要分区 |
 | 记忆系统 | CLAUDE.md + Hook + 压缩摘要 | CLAUDE.md + 压缩摘要 + n-gram 向量检索 | 自研 n-gram（ChromaDB 在 Windows 崩溃） |
 | 子 Agent 协作 | SendMessage + JSONL邮箱 + FSM | AgentTool 统一路由 | 单机不需要对等通信协议 |
 | 权限 | 7 层 + AST 分析 | 4 层 | 不需要 iOS/Android 沙箱、OS 级防护 |
