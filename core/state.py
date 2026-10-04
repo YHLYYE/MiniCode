@@ -1,5 +1,4 @@
 """Shared agent state types — no circular dependencies"""
-import time
 from dataclasses import dataclass, field, replace
 from enum import Enum
 
@@ -37,9 +36,6 @@ class LoopState:
 
     def add_message(self, msg: Message) -> "LoopState":
         return replace(self, messages=self.messages + (msg,))
-
-    def add_messages(self, msgs: list[Message]) -> "LoopState":
-        return replace(self, messages=self.messages + tuple(msgs))
 
     def with_transition(self, reason: ContinueReason) -> "LoopState":
         return replace(self, transition=reason)

@@ -1,6 +1,5 @@
 """File read/write tools — operate through a pluggable FilesystemBackend."""
 import asyncio
-from pathlib import Path
 
 from core.tools.base import Tool
 from core.tools.fs_backend import FilesystemBackend, LocalFilesystemBackend

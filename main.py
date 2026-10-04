@@ -218,6 +218,8 @@ def _persist_session(loop, store: SessionStore, memory_manager):
             summarize_messages(loop.state.messages)
         )
     except Exception:
+        # 会话本身已经由上面的 store.save 落盘了；这里是"顺手把摘要也存一份"。
+        # 它失败不该让退出流程崩掉，所以吞掉——但只吞这一处，且是退出路径。
         pass
 
 

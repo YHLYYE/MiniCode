@@ -417,6 +417,25 @@ class AgentLoop:
                                 await self._memory.record_file_edit(
                                     file_path, "", ""
                                 )
+                # Edit 成功 → 同样登记。此前只登记 Write，而改存量代码用的是
+                # Edit：一个以 Edit 为主的改造任务跑长之后触发 Autocompact，
+                # 最近改过的文件内容一条都回灌不回来（Write 路径有、Edit 没有）。
+                # Edit 手里只有片段，没有全文，所以从它自己的 backend 回读一次
+                # ——走同一抽象，可插拔后端不会被绕过；读文件和 Edit 本身同量级。
+                if tool_name == "Edit" and result.startswith("Edited "):
+                    file_path = tool_input.get("file_path", "")
+                    backend = getattr(self._tools.get(tool_name), "_backend", None)
+                    if file_path and backend is not None:
+                        try:
+                            current_text = await asyncio.to_thread(
+                                backend.read, file_path
+                            )
+                        except Exception:
+                            # 回灌的语义是"这个文件现在长什么样"。读不到就不登记：
+                            # 宁可不回灌，也不能把过期内容当现状喂回去。
+                            current_text = ""
+                        if current_text:
+                            self._compressor.record_edit(file_path, current_text)
                 # TodoWrite 成功 → 记住这份清单（Snip 跳过它、Autocompact 回灌它）
                 if tool_name == "TodoWrite" and result.startswith("## Task List"):
                     self._compressor.record_task_list(result)

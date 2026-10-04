@@ -192,7 +192,6 @@ class AgentTool(Tool):
     # ── Sub-agent runner ──
 
     async def _run_subagent(self, task: str, profile: dict) -> dict:
-        from core.agent_loop import AgentLoop
         from core.state import TextDelta, DoneEvent
 
         # Resolve tools

@@ -121,6 +121,11 @@ class _MockModel:
             yield c
         self.idx += 1
 
+    async def chat(self, messages=None, max_tokens=None, **kwargs):
+        """L3 风险分类走的是非流式 chat()。破坏性工具没有它就会被判高危、
+        然后 fail-closed 拒绝执行 —— 这里返回低风险，让 Edit 真的跑起来。"""
+        return '{"risk": "low", "reason": "test"}'
+
 
 @pytest.mark.asyncio
 async def test_loop_registers_task_list_after_todowrite():
@@ -143,3 +148,77 @@ async def test_loop_registers_task_list_after_todowrite():
     assert any(isinstance(e, DoneEvent) for e in events)
     assert loop._compressor._task_list.startswith("## Task List")
     assert "读 auth.py" in loop._compressor._task_list
+
+
+# ── 6. Edit 成功也要登记（此前只有 Write 登记）──
+# 改存量代码用的是 Edit。只登记 Write 意味着：一个以 Edit 为主的改造任务
+# 跑长之后触发 Autocompact，最近改过的文件内容一条都回灌不回来。
+
+@pytest.mark.asyncio
+async def test_loop_registers_file_after_edit(tmp_path):
+    from core.tools.edit import EditTool
+
+    target = tmp_path / "auth.py"
+    target.write_text("def login():\n    return False\n", encoding="utf-8")
+
+    plan = [
+        [
+            _Chunk(type="tool_use_start", name="Edit",
+                   input={"file_path": str(target),
+                          "old_string": "return False",
+                          "new_string": "return True"},
+                   tool_call_id="c1"),
+            _Chunk(type="message_stop", stop_reason="end_turn", usage=_Usage()),
+        ],
+        [
+            _Chunk(type="text_delta", text="done"),
+            _Chunk(type="message_stop", stop_reason="end_turn", usage=_Usage()),
+        ],
+    ]
+    loop = AgentLoop(tools=[EditTool()], model_adapter=_MockModel(plan),
+                     system_prompt="test")
+    # L1 路径白名单把文件工具钉在项目目录内，临时目录要先放行，
+    # 否则 Edit 会被安全层拦掉，测的就不是登记逻辑了。
+    loop._permission.rule_filter.path_allowlist.append(tmp_path)
+    events = [e async for e in loop.run("go")]
+
+    assert any(isinstance(e, DoneEvent) for e in events)
+    recorded = dict(loop._compressor._recent_edits)
+    assert str(target) in recorded, f"Edit 成功却没登记：{recorded}"
+    # 登记的是「文件现在长什么样」，不是片段 —— 否则回灌回去的是半个文件
+    assert "return True" in recorded[str(target)]
+    assert "def login():" in recorded[str(target)]
+
+
+@pytest.mark.asyncio
+async def test_edited_file_survives_autocompact(tmp_path):
+    """端到端：Edit 过的文件在 Autocompact 之后必须还在上下文里。"""
+    from core.tools.edit import EditTool
+
+    target = tmp_path / "svc.py"
+    target.write_text("TIMEOUT = 1\n", encoding="utf-8")
+
+    plan = [
+        [
+            _Chunk(type="tool_use_start", name="Edit",
+                   input={"file_path": str(target),
+                          "old_string": "TIMEOUT = 1",
+                          "new_string": "TIMEOUT = 30"},
+                   tool_call_id="c1"),
+            _Chunk(type="message_stop", stop_reason="end_turn", usage=_Usage()),
+        ],
+        [
+            _Chunk(type="text_delta", text="done"),
+            _Chunk(type="message_stop", stop_reason="end_turn", usage=_Usage()),
+        ],
+    ]
+    loop = AgentLoop(tools=[EditTool()], model_adapter=_MockModel(plan),
+                     system_prompt="test")
+    loop._permission.rule_filter.path_allowlist.append(tmp_path)
+    _ = [e async for e in loop.run("go")]
+
+    # 用一个独立的压缩机验证「回灌」这一步（loop 自己的压缩机状态同上）
+    compressor = loop._compressor
+    compacted = await compressor.force_autocompact(loop.state)
+    joined = "\n".join(m.content for m in compacted.messages)
+    assert "TIMEOUT = 30" in joined, "Autocompact 之后编辑结果丢了"

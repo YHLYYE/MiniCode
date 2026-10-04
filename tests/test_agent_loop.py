@@ -1,13 +1,10 @@
 """Agent Loop unit tests — using Mock LLM adapter"""
-import asyncio
 import pytest
 from core.agent_loop import AgentLoop
 from core.state import (
-    LoopState, Message, ContinueReason,
-    TextDelta, ToolStart, ToolResult, ToolError, DoneEvent,
-    BudgetExceeded,
+    LoopState, Message, TextDelta, ToolResult, DoneEvent, BudgetExceeded,
 )
-from core.tools.base import Tool, ToolCall
+from core.tools.base import Tool
 from capabilities.memory import MemoryManager, MemoryType
 
 
@@ -304,8 +301,6 @@ async def test_loop_state_accumulate_usage():
 @pytest.mark.asyncio
 async def test_budget_exceeded():
     """Agent stops when budget is exceeded"""
-    from core.agent_loop import BudgetExceeded
-
     mock = MockModelAdapter([
         [
             make_text("Doing expensive work..."),

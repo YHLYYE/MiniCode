@@ -130,11 +130,11 @@ async def benchmark_compression():
           f"{tokens_compact:>10,} {_ratio(tokens_before, tokens_compact):>10}")
 
     print("-" * 64)
-    print(f"\n结论：")
+    print("\n结论：")
     print(f"  Snip 压缩比:      {_percent(tokens_before, tokens_snip)}")
     print(f"  Collapse 压缩比:  {_percent(tokens_before, tokens_collapse)}")
     print(f"  Autocompact 压缩比: {_percent(tokens_before, tokens_compact)}")
-    print(f"\n  （Token 成本降低 = 压缩比，即长会话场景下减少的重复传输）")
+    print("\n  （Token 成本降低 = 压缩比，即长会话场景下减少的重复传输）")
 
     return {
         "before": tokens_before,

@@ -203,10 +203,6 @@ class MemoryStore(ABC):
         """Search memories, optionally filtered by type."""
 
     @abstractmethod
-    def get_profile(self, key: str) -> str | None:
-        """Get a user profile value by key."""
-
-    @abstractmethod
     def set_profile(self, key: str, value: str) -> None:
         """Set a user profile key-value pair."""
 
@@ -250,15 +246,6 @@ class JSONMemoryStore(MemoryStore):
             return self._search_episodic(query, top_k)
         # No type filter → episodic + procedural
         return self._search_episodic(query, top_k) + self._search_procedural(query, top_k)
-
-    def get_profile(self, key: str) -> str | None:
-        if not self._profile_path.exists():
-            return None
-        try:
-            profile = json.loads(self._profile_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return None
-        return profile.get(key)
 
     def set_profile(self, key: str, value: str) -> None:
         self._dir.mkdir(parents=True, exist_ok=True)
@@ -427,13 +414,6 @@ class SQLiteMemoryStore(MemoryStore):
                                                 query, top_k)]
         return episodic + procedural
 
-    def get_profile(self, key: str) -> str | None:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT value FROM profile WHERE key = ?", (key,)
-            ).fetchone()
-        return row[0] if row else None
-
     def set_profile(self, key: str, value: str) -> None:
         with self._lock:
             self._conn.execute(
@@ -578,13 +558,6 @@ class MemoryManager:
     async def record_file_edit(self, file_path: str, old: str, new: str,
                                context: str = ""):
         await self.record_episodic(f"Edited {file_path}", file_paths=[file_path])
-
-    async def record_error_fix(self, error: str, fix: str,
-                               file_paths: list[str] | None = None):
-        await self.record_episodic(
-            f"Error: {error[:300]}\nFix: {fix[:300]}",
-            file_paths=file_paths or [],
-        )
 
     # ── Search ──
 

@@ -129,8 +129,6 @@ class ModelAdapter:
         max_tokens: int | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """Stream chat response as unified StreamChunk events (real-time tokens)."""
-        import litellm
-
         input_msgs = list(messages)
         if system:
             input_msgs = [{"role": "system", "content": system}] + input_msgs

@@ -140,7 +140,7 @@ async def main():
 
     print("-" * 66)
     print(f"\n✅ Token 成本降低：{saved:,} tokens（{pct:.1f}%）")
-    print(f"\n压缩触发记录（开压缩）：")
+    print("\n压缩触发记录（开压缩）：")
     if with_comp["compression_events"]:
         for round_num, before, after in with_comp["compression_events"]:
             print(f"  第 {round_num} 轮：{before:,} → {after:,} token "

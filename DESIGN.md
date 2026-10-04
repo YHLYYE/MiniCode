@@ -81,7 +81,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 185 个测试
+└── tests/                     # 188 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -225,7 +225,9 @@ class AgentLoop:
             # 4. 结果回流
             assistant_msg = Message(role="assistant", content="".join(assistant_content))
             tool_msgs = [Message(role="tool", content=str(r)) for r in tool_results]
-            state = state.add_messages([assistant_msg] + tool_msgs)
+            state = state.add_message(assistant_msg)
+            for tm in tool_msgs:
+                state = state.add_message(tm)     # LoopState 不可变，逐个 replace
 
             # 5. 累计成本
             state = state.accumulate_usage(request.usage)
@@ -844,8 +846,6 @@ class MemoryStore(ABC):
     def add(self, entry: MemoryEntry) -> None: ...
     @abstractmethod
     def search(self, memory_type, query, top_k) -> list[MemoryEntry]: ...
-    @abstractmethod
-    def get_profile(self, key) -> str | None: ...
     @abstractmethod
     def set_profile(self, key, value) -> None: ...
 
