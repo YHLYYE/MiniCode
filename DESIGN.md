@@ -81,7 +81,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 188 个测试
+└── tests/                     # 194 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -142,12 +142,18 @@ class LoopState:
     messages: tuple[Message, ...]       # 完整对话历史
     turn_count: int                     # 当前轮次
     total_tokens: int                   # 累计 token 消耗
-    total_cost_usd: float               # 累计美元成本
+    total_cost_usd: float               # 累计美元成本（按真实模型价目算，见下）
     max_output_tokens_recovery: int     # output token 升级次数
     auto_compact_attempts: int          # autocompact 重试计数
     transition: ContinueReason | None   # 本轮继续原因
     active_skills: tuple[str, ...]      # 当前活跃的 Skill 名称
 ```
+
+> `total_cost_usd` 由 `ModelAdapter.estimate_cost_usd()` 按 **litellm 的模型价目表**给出，
+> 算不出（适配器没实现 / 价目表没收录）才退回 `FALLBACK_*_PRICE_PER_M` 常量。
+> 这里曾经写死单一价格（$3/$15 每 1M），结果 1M in + 1M out 对 deepseek-chat
+> 记 $18、实际只要 $0.70（高估约 26 倍），对 claude-sonnet-4-5 又低估 1.6 倍 ——
+> 而 `--max-cost` 正是拿这个数字当护栏。
 
 ### 2.3 4 条恢复路径
 
@@ -157,6 +163,11 @@ class ContinueReason(Enum):
     PROMPT_TOO_LONG_RETRY = "ptl_retry"
     MAX_OUTPUT_TOKENS_UPGRADE = "mot_upgrade"
     MAX_OUTPUT_TOKENS_RECOVERY = "mot_recovery"
+    # 下面三个是**已有路径的细分**：它们以前都写 NEXT_TURN，跟"正常继续"
+    # 分不出来，于是"这一轮为什么继续"这个信号对这三条路径失效。
+    STREAM_RETRY = "stream_retry"           # 网络瞬态错误 → 退避重试
+    TOOL_ERROR_RETRY = "tool_error_retry"   # 工具报错 → 错误回喂给模型
+    EMPTY_RESPONSE_RETRY = "empty_retry"    # 空响应 → 提醒模型继续
 ```
 
 真正落地的 4 条恢复路径（都不把错误抛给用户）：

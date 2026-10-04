@@ -3,6 +3,17 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 
 
+# 兜底计价：每 1M token 的美元价，取 Claude Sonnet 3.5 档（$3 / $15）。
+#
+# 这是**兜底**，不是主口径 —— 真实计价走 `ModelAdapter.estimate_cost_usd()`
+# （litellm 自带价目表）。写死单一价格是错的，而且错在两个方向：
+# 1M input + 1M output 按这里是 $18，而 litellm 的价目表里
+#   deepseek-chat 是 $0.70（高估约 26 倍）、claude-sonnet-4-5 是 $28.50（低估 1.6 倍）。
+# 这个数字下游是 `--max-cost` 预算护栏，所以口径错了护栏就是错的。
+FALLBACK_INPUT_PRICE_PER_M = 3.0
+FALLBACK_OUTPUT_PRICE_PER_M = 15.0
+
+
 class ContinueReason(Enum):
     NEXT_TURN = "next_turn"
     PROMPT_TOO_LONG_RETRY = "ptl_retry"
@@ -21,6 +32,10 @@ class Message:
     content: str
     tool_call_id: str | None = field(default=None)  # for OpenAI/DeepSeek format
     tool_calls: list | None = field(default=None)   # assistant's tool_calls (OpenAI format)
+    # 注意：frozen=True 给的是**不可变性**，不是可哈希性。tool_calls 是 list，
+    # 所以带 tool_calls 的 Message（以及含它的 LoopState）hash() 会 TypeError。
+    # 现在没有任何地方拿它们当 dict key / 放进 set，所以保持 list 不改成 tuple
+    # —— 它要原样进 OpenAI/DeepSeek 的请求体，也必须能直接 JSON 序列化。
 
 
 @dataclass(frozen=True)
@@ -43,16 +58,24 @@ class LoopState:
     def with_field(self, **kwargs) -> "LoopState":
         return replace(self, **kwargs)
 
-    def accumulate_usage(self, usage) -> "LoopState":
+    def accumulate_usage(self, usage, cost_usd: float | None = None) -> "LoopState":
+        """累计一轮的 token 与花费。
+
+        `cost_usd` 由调用方按**真实模型**价目给出（`ModelAdapter`），
+        给不出（适配器没实现 / 价目表没有这个模型）才退回 FALLBACK_* 单价。
+        以前这里只有写死单价：换模型之后账本会错到离谱，而 `--max-cost`
+        正是拿这个账本当护栏。
+        """
         new_tokens = self.total_tokens + usage.input_tokens + usage.output_tokens
-        cost = (
-            usage.input_tokens * 3 / 1_000_000 +
-            usage.output_tokens * 15 / 1_000_000
-        )
+        if cost_usd is None:
+            cost_usd = (
+                usage.input_tokens * FALLBACK_INPUT_PRICE_PER_M
+                + usage.output_tokens * FALLBACK_OUTPUT_PRICE_PER_M
+            ) / 1_000_000
         return replace(
             self,
             total_tokens=new_tokens,
-            total_cost_usd=round(self.total_cost_usd + cost, 6),
+            total_cost_usd=round(self.total_cost_usd + cost_usd, 6),
         )
 
     def add_external_usage(self, tokens: int, cost_usd: float) -> "LoopState":

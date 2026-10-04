@@ -247,7 +247,7 @@ class AgentLoop:
             stream_retries = 0
 
             # ── 3. Track costs (fail-fast on budget) ──
-            self._state = self._state.accumulate_usage(usage)
+            self._state = self._state.accumulate_usage(usage, self._turn_cost(usage))
             if self._state.total_cost_usd >= self._max_cost_usd:
                 raise BudgetExceeded(
                     f"Budget exceeded: ${self._state.total_cost_usd:.4f} "
@@ -519,6 +519,18 @@ class AgentLoop:
 
         # Tier 3: give up
         return False
+
+    def _turn_cost(self, usage) -> float | None:
+        """这一轮该记多少钱 —— 由模型适配器按真实价目表算。
+
+        返回 None 表示"算不出来"（适配器没实现这个方法，或者 litellm 的价目表
+        里没有这个模型），此时 `accumulate_usage` 会退回保守兜底单价。
+        `--max-cost` 护栏依赖这个数字，所以它必须跟着模型走，不能写死一份价。
+        """
+        estimator = getattr(self._model, "estimate_cost_usd", None)
+        if not callable(estimator):
+            return None
+        return estimator(usage.input_tokens, usage.output_tokens)
 
     async def _record_task_done(self, note: str = "") -> None:
         """Persist a task-completion event to episodic memory.

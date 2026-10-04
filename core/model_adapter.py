@@ -96,6 +96,26 @@ class ModelAdapter:
             })
         return openai_tools
 
+    def estimate_cost_usd(self, input_tokens: int,
+                          output_tokens: int) -> float | None:
+        """按 litellm 的模型价目表算这一轮花费；查不到价目返回 None。
+
+        以前这个计算写死在 `LoopState.accumulate_usage` 里，是单一价格，
+        换模型之后账本会错到离谱（1M in + 1M out：deepseek-chat 高估约 26 倍、
+        claude-sonnet-4-5 低估约 1.6 倍），而 `--max-cost` 拿的正是这个数字。
+        litellm 没收录的模型返回 None，让调用方退回保守单价。
+        """
+        try:
+            import litellm
+            prompt_cost, completion_cost = litellm.cost_per_token(
+                model=self.model,
+                prompt_tokens=input_tokens,
+                completion_tokens=output_tokens,
+            )
+            return prompt_cost + completion_cost
+        except Exception:
+            return None
+
     async def chat(
         self,
         messages: list,
