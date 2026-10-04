@@ -126,7 +126,8 @@ async def test_write_reaches_ai_classifier_but_read_does_not():
     model = _CountingRiskModel()
     pm = PermissionManager(model=model)
 
-    assert await pm.authorize(ToolCall("Read", {"file_path": "a.py"})) is True
+    assert await pm.authorize(ToolCall("Read", {"file_path": "a.py"}),
+                              is_destructive=False) is True
     assert model.calls == 0, "只读工具不该调用 AI 分类器"
 
     assert await pm.authorize(ToolCall("Write", {"file_path": "a.py"}),

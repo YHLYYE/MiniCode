@@ -1,5 +1,6 @@
 """Shell command execution tool — 3-layer security defense"""
 import asyncio
+import re
 from pathlib import Path
 from core.tools.base import Tool
 from capabilities.security import SecurityBlock, DANGEROUS_COMMAND_PATTERNS

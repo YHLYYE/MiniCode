@@ -81,7 +81,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 151 个测试
+└── tests/                     # 185 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -1013,101 +1013,166 @@ if usage is not None:
 
 ### 8.2 实现
 
+> 下面是**当前代码**的结构（`capabilities/security.py`），不是早期草稿。
+> 关键点全在「每条失败路径往哪走」上，也是面试最容易被追着问的地方。
+
 ```python
 class SecurityBlock(Exception):
     """安全拦截 — 上层捕获后向模型注入拦截信息"""
     pass
 
+# 危险命令正则只有一份，RuleFilter 与 BashTool 共用（两份会漂移：
+# 曾经两份各 10 条，且都没覆盖 Windows 删除命令）
+DANGEROUS_COMMAND_PATTERNS = [
+    # Unix 递归/强制删除、递归改权限
+    (r"\brm\s+(-[a-z]*[rf][a-z]*|--recursive|--force)", "recursive/forced deletion"),
+    (r"\b(chmod|chown)\s+-R\b", "recursive permission change"),
+    # Windows 等价物（此前完全没有防护）
+    (r"\b(rd|rmdir)\b[^\n]*/\s?s\b", "recursive directory deletion"),
+    (r"\bdel\b[^\n]*/\s?[sf]\b", "forced deletion"),
+    (r"\b(remove-item|ri)\b[^\n]*-recurse", "recursive deletion"),
+    (r"\bformat\s+[a-z]:", "filesystem format"),
+    (r"\breg\s+delete\b", "registry deletion"),
+    (r"\bdiskpart\b", "disk partitioning"),
+    # 丢弃未提交工作（Agent 最容易造成不可逆损失的一类）
+    (r"\bgit\s+clean\b[^\n]*-[a-z]*f", "untracked file deletion"),
+    (r"\bgit\s+reset\b[^\n]*--hard", "hard reset discards uncommitted work"),
+    (r"\bgit\s+checkout\b[^\n]*(\s--(\s|$)|\s\.(\s|$))", "discards uncommitted changes"),
+    (r"\bgit\s+restore\b", "discards working-tree changes"),
+    (r"\bgit\s+branch\b[^\n]*\s(?-i:-D)\b", "force-deletes a branch"),
+    (r"\bgit\s+stash\s+(drop|clear)\b", "drops stashed work"),
+    (r"\btruncate\s+-s\b", "truncates a file to zero"),
+    ...
+]
+
+# 哪些工具吃路径参数、参数名叫什么 —— 用于把文件操作钉在项目目录内
+_PATH_PARAM = {"Read": "file_path", "Write": "file_path", "Edit": "file_path",
+               "Grep": "path", "Glob": "path"}
+
+
 class RuleFilter:
-    DANGEROUS_PATTERNS = [
-        (r"rm\s+(-rf?|--recursive).*/", "递归删除根目录"),
-        (r"(sudo|chmod\s+777|chown)", "权限提升"),
-        (r"(curl|wget).*\|.*(sh|bash|python)", "管道执行远程脚本"),
-        (r">\s*/dev/[a-z]+", "覆盖系统设备"),
-        (r"git\s+push\s+(--force|-f)", "强制推送"),
-        (r"(DROP|TRUNCATE)\s+(TABLE|DATABASE)", "删除数据库"),
-        (r"mkfs\.", "格式化文件系统"),
-        (r"dd\s+if=", "磁盘直接读写"),
-        (r"(/proc/|/sys/)", "系统文件操作"),
-    ]
-    PATH_ALLOWLIST = [Path.cwd()]
-    COMMAND_WHITELIST = {
-        "ls", "cat", "head", "tail", "wc", "sort", "uniq",
-        "grep", "find", "which", "pwd", "echo", "date",
-    }
+    """L1：正则拦危险命令 + 路径白名单把文件工具钉在项目内。"""
+
+    DANGEROUS_PATTERNS = DANGEROUS_COMMAND_PATTERNS
 
     def check(self, tool_call: ToolCall):
         if tool_call.name == "Bash":
             command = tool_call.input.get("command", "")
             for pattern, reason in self.DANGEROUS_PATTERNS:
                 if re.search(pattern, command, re.IGNORECASE):
-                    raise SecurityBlock(f"Blocked: {reason} → '{command[:100]}'")
+                    raise SecurityBlock(f"Blocked ({reason}): {command[:100]}")
 
-        if tool_call.name == "Write":
-            file_path = Path(tool_call.input.get("file_path", ""))
-            if not any(str(file_path).startswith(str(p))
-                       for p in self.PATH_ALLOWLIST):
-                raise SecurityBlock(f"Blocked: path outside project → {file_path}")
+        if tool_call.name in _PATH_PARAM:
+            raw = tool_call.input.get(_PATH_PARAM[tool_call.name]) or "."
+            resolved = Path(raw).resolve()          # 展开 .. 与符号链接
+            # 用 is_relative_to，不用 startswith：startswith 会把
+            # 兄弟目录 "minicode-evil" 误判成项目内
+            if not resolved.is_relative_to(Path.cwd().resolve()):
+                raise SecurityBlock(f"Path outside project: {raw}")
 
 
 class ToolSelfCheck:
-    async def check(self, tool_call: ToolCall) -> RiskLevel:
+    """L2：工具参数自检。Bash 细分，破坏性工具必须升到 MEDIUM 才能进 L3。"""
+
+    COMMAND_WHITELIST = {"ls", "cat", "head", "tail", "wc", "sort", "uniq",
+                         "grep", "find", "which", "pwd", "echo", "date"}
+
+    def check(self, tool_call: ToolCall, is_destructive: bool) -> RiskLevel:
         if tool_call.name == "Bash":
             command = tool_call.input.get("command", "")
             if ">" in command or ">>" in command:
                 return RiskLevel.MEDIUM
-            cmd_base = command.strip().split()[0] if command.strip() else ""
-            if cmd_base not in RuleFilter.COMMAND_WHITELIST:
+            base = command.strip().split()[0] if command.strip() else ""
+            if base and base not in self.COMMAND_WHITELIST:
                 return RiskLevel.MEDIUM
+            return RiskLevel.LOW
+
+        # Write / Edit 此前在这里拿 LOW 直接被放行，导致四层审查实际只对
+        # Bash 生效 —— 现在它们至少 MEDIUM，保证进得了 L3。
+        if is_destructive:
+            return RiskLevel.MEDIUM
         return RiskLevel.LOW
 
 
 class AIRiskClassifier:
-    async def classify(self, tool_call: ToolCall) -> RiskLevel:
-        prompt = f"""Analyze security risk:
-Tool: {tool_call.name}
-Input: {json.dumps(tool_call.input, indent=2)[:1000]}
+    """L3：LLM 判断意图。四条失败路径全部 fail-closed → HIGH。"""
 
-Check: prompt injection, scope violation, data exfiltration, irreversibility.
-Output: {{"risk": "low|medium|high|critical", "reason": "..."}}"""
-        result = await _llm.chat(prompt, max_tokens=200)
-        return RiskLevel(json.loads(result)["risk"])
+    async def classify(self, tool_call: ToolCall) -> RiskLevel:
+        if self._model is None:
+            return RiskLevel.HIGH          # ① 没模型
+
+        prompt = f"""Analyze security risk:
+        {{"risk": "low|medium|high|critical", "reason": "..."}}
+        Tool: {tool_call.name}
+        Input: {json.dumps(tool_call.input, indent=2)[:500]}"""
+        try:
+            result = await self._model.chat(messages=[...], max_tokens=100)
+            data = self._extract_json(result)
+            risk = str(data.get("risk", "high")).lower()
+            try:
+                return RiskLevel(risk)
+            except ValueError:
+                return RiskLevel.HIGH      # ② 风险值不在枚举里
+        except Exception:
+            return RiskLevel.HIGH          # ③ 分类器本身抛异常
+
+    @staticmethod
+    def _extract_json(text: str) -> dict:
+        """④ 解析失败也返回 high。
+
+        这里返回 MEDIUM 曾是真实的 fail-open：`authorize()` 放行 LOW/MEDIUM，
+        于是模型输出散文（"I cannot help with that"）、空串、两个 JSON 对象
+        （贪婪 `\\{.*\\}` 把它们拼成非法 JSON）时，工具反而被**自动批准**。
+        现在改为扫描每个 `{` 到它配对的 `}`，逐个尝试解析；全都失败 → high。
+        """
+        ...
+        return {"risk": "high"}
 
 
 class PermissionManager:
-    def __init__(self):
-        self.rule_filter = RuleFilter()
-        self.self_check = ToolSelfCheck()
-        self.ai_classifier = AIRiskClassifier()
+    """把四层串起来。"""
 
-    async def authorize(self, tool_call: ToolCall) -> bool:
-        # L1: 规则过滤
-        self.rule_filter.check(tool_call)
+    async def authorize(self, tool_call: ToolCall,
+                        is_destructive: bool) -> bool:
+        # is_destructive 故意不给默认值：老版本 `= False` 的默认值意味着
+        # 调用方忘传 → Write/Edit 在 L2 拿 LOW 直接放行，四层静默变两层。
+        # 现在的调用点在 core/agent_loop.py，从 Tool 对象上取。
+        self.rule_filter.check(tool_call)                 # L1（可抛 SecurityBlock）
 
-        # L2: 工具自检
-        risk = await self.self_check.check(tool_call)
-        if risk in (RiskLevel.LOW,):
+        risk = self.self_check.check(tool_call, is_destructive)
+        if risk == RiskLevel.LOW:
             return True
 
-        # L3: AI 分类
-        risk = await self.ai_classifier.classify(tool_call)
+        risk = await self.ai_classifier.classify(tool_call)   # L3
         if risk in (RiskLevel.LOW, RiskLevel.MEDIUM):
             return True
 
-        # L4: 人工确认
-        return await self._request_approval(tool_call, risk)
+        return await self._request_approval(tool_call, risk)   # L4
 
-    async def _request_approval(self, tool_call: ToolCall,
-                                 risk: RiskLevel) -> bool:
-        print(f"""
-╔══════════════════════════════════════╗
-║  HIGH RISK ({risk.value})             ║
-║  Tool: {tool_call.name:<28} ║
-║  {tool_call.input_summary():<28} ║
-╚══════════════════════════════════════╝
-""")
-        return input("Execute? [y/N]: ").strip().lower() == "y"
+    async def _request_approval(self, tool_call, risk) -> bool:
+        print(f"\n{'!'*60}\n⚠  HIGH RISK OPERATION ({risk.value})\n{'!'*60}\n")
+        try:
+            # 同步 input() 会阻塞事件循环 → 丢线程池
+            response = await asyncio.to_thread(input, "Execute? [y/N]: ")
+            return response.strip().lower() == "y"
+        except (EOFError, KeyboardInterrupt):
+            return False
+        except Exception:
+            # stdin 被重定向/关闭时 input() 抛 OSError（非交互运行、管道）。
+            # 问不到人 = 不允许，不能让异常把任务打崩。
+            print("[无法获取人工确认（stdin 不可读）→ 按 fail-closed 拒绝执行]")
+            return False
 ```
+
+**fail-closed 的四条失败路径**（面试直接答这个）：
+
+| 失败场景 | 返回 | 结果 |
+|---|---|---|
+| 没有配置分类模型 | HIGH | 进 L4 问人 |
+| 模型返回的风险值不在枚举里（如 `"HIGH"` 大写） | HIGH | 进 L4 问人 |
+| 分类器自身抛异常/超时 | HIGH | 进 L4 问人 |
+| 输出解析不出 JSON（散文、空串、多个对象） | HIGH | 进 L4 问人 |
+| L4 拿不到人工输入（EOF / stdin 被重定向） | False | 拒绝执行 |
 
 ### 8.3 Plan/Normal 双模式
 
@@ -1365,7 +1430,12 @@ class SessionStore:
    → 子 Agent 复用同一个 AgentLoop 但拥有独立 messages[]。执行完毕只返回结果摘要，不回传完整上下文。AgentTool 统一路由——模型只需要学会用"Agent"这个工具。
 
 5. **"四层安全审查的 fail-closed 怎么体现？"**
-   → Tool 默认 is_concurrency_safe=False，忘记声明就串行；默认 is_readonly=False，触发权限检查。L1 正则拒绝危险命令 + 路径白名单，L2 检查参数（破坏性工具至少 MEDIUM，保证进得了 L3），L3 AI 分类（无模型 / 异常一律判 HIGH），L4 人工确认（拿不到输入也判拒绝）。Plan 模式在工具集层面物理移除写操作工具。
+   → Tool 默认 is_concurrency_safe=False，忘记声明就串行；默认 is_readonly=False，触发权限检查。L1 正则拒绝危险命令 + 路径白名单，L2 检查参数（破坏性工具至少 MEDIUM，保证进得了 L3），L3 AI 分类（**无模型 / 异常 / 风险值非法 / JSON 解析失败 —— 四条路径一律判 HIGH**），L4 人工确认（拿不到输入也判拒绝）。Plan 模式在工具集层面物理移除写操作工具。
+
+6. **"你怎么知道安全检查真的生效？"**（推荐主动讲的真实故事）
+   → 我第一次加固时把 RuleFilter 和 BashTool 里两份重复的危险命令正则合并成一份，顺手把 `import re` 带走了。**159 个测试全绿，但 Bash 工具其实每次调用都抛 NameError** —— 因为没有任何一个测试真正执行过 Bash 工具本体，只测了规则函数。这暴露出两个问题：一是重复代码合并时的隐性依赖，二是**测试覆盖的是"我写的函数"而不是"用户能走的路径"**。
+   → 同一个自检里还查出：L3 解析失败回落到 MEDIUM，而 `authorize()` 放行 MEDIUM，等于模型输出散文（"I cannot help with that"）时工具反而被自动批准 —— 这跟文件头写的 fail-closed 是反的。
+   → 修完之后我把三条修复**逐条反向验证**：把 bug 放回去，对应测试必须变红（一次注入三处，8 条测试同时红，其余 177 条不受影响），红不起来的测试就删掉 —— 只记录现状、拦不住回归的测试没有价值。
 
 ---
 

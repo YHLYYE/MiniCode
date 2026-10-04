@@ -7,7 +7,7 @@ permission; security is layered so no single check is the sole gate.
 
 import asyncio
 import json
-from dataclasses import dataclass
+import re
 from enum import Enum
 from pathlib import Path
 
@@ -49,6 +49,16 @@ DANGEROUS_COMMAND_PATTERNS: list[tuple[str, str]] = [
     (r"\bdiskpart\b", "disk partitioning"),
     # ── Other destructive operations ──
     (r"\bgit\s+clean\b[^\n]*-[a-z]*f", "untracked file deletion"),
+    # Discarding uncommitted work. `git checkout <branch>` / `-b <new>` are
+    # daily work and must stay allowed, so these patterns require the explicit
+    # discard forms (`--`, a bare `.` path, `-D`, `--hard`).
+    (r"\bgit\s+reset\b[^\n]*--hard", "hard reset discards uncommitted work"),
+    (r"\bgit\s+checkout\b[^\n]*(\s--(\s|$)|\s\.(\s|$))", "discards uncommitted changes"),
+    (r"\bgit\s+restore\b", "discards working-tree changes"),
+    # `-D` 必须区分大小写：`git branch -d` 只删已合并分支（安全），
+    # 全局 IGNORECASE 会把两者一起拦掉。
+    (r"\bgit\s+branch\b[^\n]*\s(?-i:-D)\b", "force-deletes a branch"),
+    (r"\bgit\s+stash\s+(drop|clear)\b", "drops stashed work"),
     (r"\bsudo\b", "privilege escalation"),
     (r"\bchmod\s+777", "overly permissive permissions"),
     (r"(curl|wget)\b[^\n]*\|[^\n]*\b(sh|bash|zsh|python3?)\b", "remote script piped execution"),
@@ -56,6 +66,7 @@ DANGEROUS_COMMAND_PATTERNS: list[tuple[str, str]] = [
     (r"\bgit\s+push\b[^\n]*(--force\b|\s-f\b)", "force push"),
     (r"\b(DROP|TRUNCATE)\s+(TABLE|DATABASE)", "database destruction"),
     (r"\bmkfs\.", "filesystem format"),
+    (r"\btruncate\s+-s\b", "truncates a file to zero"),
     (r"\bdd\s+if=", "direct disk I/O"),
     (r"/proc/|/sys/", "system filesystem access"),
     (r"\b(shutdown|reboot|halt|poweroff)\b", "system shutdown"),
@@ -88,8 +99,6 @@ class RuleFilter:
         """Check a tool call against security rules.
         Raises SecurityBlock if the operation is dangerous.
         """
-        import re
-
         # Check shell commands
         if tool_call.name == "Bash":
             command = tool_call.input.get("command", "")
@@ -161,7 +170,11 @@ class AIRiskClassifier:
 
     Detects: prompt injection patterns, scope violations,
     data exfiltration attempts, and irreversible operations.
-    Falls back to MEDIUM risk when model is unavailable.
+
+    Every failure path returns HIGH (fail-closed): no model, classifier
+    exception, unparseable output, or an out-of-vocabulary risk value.
+    HIGH reaches L4, so the default answer to "the classifier did not
+    answer" is "ask the human", never "let it through".
     """
 
     def __init__(self, model=None):
@@ -194,21 +207,40 @@ Input: {json.dumps(tool_call.input, indent=2)[:500]}"""
 
     @staticmethod
     def _extract_json(text: str) -> dict:
-        """Extract a JSON object from model output (handles markdown fences)."""
-        import re
+        """Extract the first JSON object from model output.
+
+        Handles markdown fences and prose, and scans for a *balanced* brace
+        group. The earlier greedy `\\{.*\\}` swallowed two objects
+        ("{...} {...}") into one unparseable string, which then fell through
+        to the default — so the more the model said, the less we checked.
+        """
         # Try direct parse first
         try:
-            return json.loads(text)
+            data = json.loads(text)
+            if isinstance(data, dict):
+                return data
         except json.JSONDecodeError:
             pass
-        # Try extracting {...} block
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                pass
-        return {"risk": "medium"}
+        # Walk every "{", take the slice up to its matching "}"
+        for start in (m.start() for m in re.finditer(r"\{", text)):
+            depth = 0
+            for idx in range(start, len(text)):
+                if text[idx] == "{":
+                    depth += 1
+                elif text[idx] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            data = json.loads(text[start:idx + 1])
+                            if isinstance(data, dict):
+                                return data
+                        except json.JSONDecodeError:
+                            pass
+                        break
+        # Nothing parseable → fail-closed. Returning MEDIUM here meant a model
+        # that answered with prose ("I cannot help with that") was *approved*
+        # downstream, because authorize() lets LOW and MEDIUM through.
+        return {"risk": "high"}
 
 
 # ── Permission Manager (orchestrates all 4 layers) ──
@@ -227,11 +259,14 @@ class PermissionManager:
         self.ai_classifier = AIRiskClassifier(model)
 
     async def authorize(self, tool_call: ToolCall,
-                        is_destructive: bool = False) -> bool:
+                        is_destructive: bool) -> bool:
         """Run through all security layers. Returns True if allowed.
 
         `is_destructive` comes from the Tool object (the loop has it, the
-        ToolCall doesn't).
+        ToolCall doesn't). It is intentionally NOT defaulted: the old
+        `= False` default meant a caller who forgot it silently downgraded
+        Write/Edit to L2-LOW, auto-approving them and skipping L3+L4
+        entirely — a four-layer chain quietly becoming two layers.
         """
         # L1: Rule filter — raises SecurityBlock on danger
         self.rule_filter.check(tool_call)

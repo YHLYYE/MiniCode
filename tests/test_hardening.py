@@ -9,6 +9,15 @@
 5. 工具结果截断提示的省略字符数比实际少 500
 6. 压缩熔断器的计数器永远不会增加，熔断形同虚设
 7. `Tool.check_concurrency_safe(input)` 钩子从未被调用（只读类属性）
+8. `BashTool.execute` 缺 `import re`（把两份正则合并成一份时删掉的）→ 任何
+   命令都抛 NameError。此前**没有一个测试真正执行过 Bash 工具本体**，
+   所以 159 个测试全绿、shell 能力 100% 不可用。
+9. L3 分类器解析失败时回落到 MEDIUM，而 `authorize()` 放行 MEDIUM —— 模型
+   输出散文（"I cannot help with that"）反而等于自动批准，是 fail-open。
+10. `authorize()` 的 `is_destructive` 有 `= False` 默认值，忘了传就让
+    Write/Edit 在 L2 拿 LOW 直接放行，四层审查静默退化成两层。
+11. `git reset --hard` / `git checkout -- .` / `git branch -D` / `truncate -s`
+    全在 L1 放行 —— 恰好是「不可恢复地删掉未提交工作」那一类。
 """
 import asyncio
 from pathlib import Path
@@ -283,3 +292,119 @@ async def test_concurrency_hook_is_consulted_by_the_loop():
     i_b = tool.trace.index(("start", "b"))
     assert tool.trace[i_b + 1] == ("end", "b"), (
         f"b 声明了不并发，却和别人重叠了：{tool.trace}")
+
+
+# ── 8. Bash 工具本体真的跑得起来 ──
+# 这条测试存在的理由：以前没有任何测试调用 BashTool.execute()，所以
+# 「用了 re.search 但没 import re」这种必崩的错误可以带着 159 个绿测试上线。
+
+@pytest.mark.asyncio
+async def test_bash_tool_actually_executes_a_command():
+    from core.tools.shell import BashTool
+
+    out = await BashTool().execute("echo minicode-bash-ok")
+    assert "minicode-bash-ok" in out, out
+    assert "[exit code: 0]" in out, out
+
+
+@pytest.mark.asyncio
+async def test_bash_tool_blocks_dangerous_command_at_tool_level():
+    """工具层的自检独立于 L1 —— 即使绕过 permission pipeline 也拦得住。"""
+    from core.tools.shell import BashTool
+
+    with pytest.raises(SecurityBlock):
+        await BashTool().execute("rm -rf /")
+
+
+# ── 9. 分类器解析失败必须 fail-closed ──
+
+@pytest.mark.parametrize("text", [
+    "I cannot help with that request.",       # 模型拒答（最可能的真实输出）
+    "",                                       # 空响应
+    '{"risk": "high"} trailing {"risk": "low"}',  # 两个对象：贪婪正则吞成一个
+    '{"risk": "high"',                        # 括号没闭合
+    "risk: high",                             # 根本不是 JSON
+])
+def test_classifier_parse_failure_is_high_not_medium(text):
+    from capabilities.security import AIRiskClassifier
+
+    assert AIRiskClassifier._extract_json(text)["risk"] == "high", text
+
+
+def test_classifier_still_reads_legit_payloads():
+    """补 fail-closed 不能把正常解析一起打掉。"""
+    from capabilities.security import AIRiskClassifier
+
+    assert AIRiskClassifier._extract_json('{"risk": "low"}')["risk"] == "low"
+    assert AIRiskClassifier._extract_json(
+        '```json\n{"risk": "critical", "reason": "x"}\n```')["risk"] == "critical"
+    assert AIRiskClassifier._extract_json(
+        'sure: {"risk": "medium", "meta": {"a": {"b": 1}}} done')["risk"] == "medium"
+    # 两个对象取第一个，而不是把两段拼成非法 JSON
+    assert AIRiskClassifier._extract_json(
+        '{"risk": "high"} {"risk": "low"}')["risk"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_prose_answer_from_classifier_blocks_write():
+    from capabilities.security import AIRiskClassifier, PermissionManager, RiskLevel
+
+    class ProseModel:
+        async def chat(self, **kwargs):
+            return "I cannot help with that request."
+
+    c = AIRiskClassifier(model=ProseModel())
+    assert await c.classify(_bash("echo hi")) == RiskLevel.HIGH
+
+    pm = PermissionManager(model=ProseModel())
+    # HIGH → L4 → pytest 下问不到人 → fail-closed 拒绝
+    assert await pm.authorize(ToolCall("Write", {"file_path": "a.py"}),
+                              is_destructive=True) is False
+
+
+# ── 10. is_destructive 必须显式传 ──
+
+@pytest.mark.asyncio
+async def test_authorize_refuses_implicit_is_destructive():
+    """忘了传 is_destructive 应该立刻 TypeError，而不是静默退化成两层。"""
+    from capabilities.security import PermissionManager
+
+    class LowModel:
+        async def chat(self, **kwargs):
+            return '{"risk": "low"}'
+
+    pm = PermissionManager(model=LowModel())
+    with pytest.raises(TypeError):
+        await pm.authorize(ToolCall("Write", {"file_path": "a.py"}))
+
+
+# ── 11. 未提交工作的破坏性命令 ──
+
+@pytest.mark.parametrize("cmd", [
+    "git reset --hard HEAD~5",
+    "git reset --hard",
+    "git checkout -- src/main.py",
+    "git checkout .",
+    "git restore src/",
+    "git branch -D feature/x",
+    "git stash drop",
+    "git stash clear",
+    "truncate -s 0 important.txt",
+])
+def test_discards_uncommitted_work_blocked(cmd):
+    with pytest.raises(SecurityBlock):
+        RuleFilter().check(_bash(cmd))
+
+
+@pytest.mark.parametrize("cmd", [
+    "git checkout main",
+    "git checkout -b feature/new",
+    "git reset HEAD~1",              # soft/mixed 保留工作区
+    "git reset --soft HEAD~1",
+    "git branch -d merged-feature",  # 已合并分支，安全删除
+    "git stash list",
+    "git stash pop",
+])
+def test_normal_git_workflow_not_blocked(cmd):
+    """加规则不能把日常 git 操作一起拦掉，否则 Agent 没法干活。"""
+    RuleFilter().check(_bash(cmd))
