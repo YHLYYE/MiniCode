@@ -147,7 +147,12 @@ def main(task: str | None, mode: str, max_turns: int, max_cost: float,
         if resume_state is None:
             print(f"会话 {resume} 不存在。可用: {store.list_sessions()}")
             return
-        print(f"[已恢复会话 {resume}，{resume_state.turn_count} 轮历史]")
+        note = ""
+        last = store.last_transition(resume)
+        if last is not None and last is not ContinueReason.NEXT_TURN:
+            label = _RECOVERY_LABELS.get(last, last.value)
+            note = f"，上次结束于：{label}"
+        print(f"[已恢复会话 {resume}，{resume_state.turn_count} 轮历史{note}]")
 
     if task:
         # 单次任务模式

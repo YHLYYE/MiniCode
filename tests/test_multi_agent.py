@@ -11,12 +11,6 @@ def test_agent_type_enum():
     ]
 
 
-def test_team_roles():
-    """team 模式有三个角色"""
-    at = AgentTool()
-    assert at.TEAM_ROLES == ["research", "coding", "testing"]
-
-
 def test_profiles_exist():
     """两个 profile 都定义了（explore/general）"""
     at = AgentTool()

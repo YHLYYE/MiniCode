@@ -16,7 +16,7 @@ def _unpack(mode):
 
 
 def test_normal_mode_registers_all_tools(tmp_path, monkeypatch):
-    """normal 模式应注册全部 12 个工具"""
+    """normal 模式应注册全部 13 个工具"""
     monkeypatch.chdir(tmp_path)  # 避免在真实项目目录创建 .minicode
     tools, _, _, memory_manager, _ = _unpack("normal")
     try:

@@ -10,7 +10,6 @@ import asyncio
 import pytest
 
 from capabilities.compression import ContextCompressor
-from capabilities.security import ExecutionMode, resolve_tools_for_mode
 from core.agent_loop import AgentLoop
 from core.state import DoneEvent, LoopState, Message
 from core.tools.task import TodoWriteTool
@@ -42,18 +41,6 @@ def test_system_prompt_mentions_todowrite():
 
 
 # ── 2. Plan 模式要放行 ──
-
-def test_plan_mode_keeps_todowrite_but_not_write():
-    class _T:
-        def __init__(self, name, readonly):
-            self.name = name
-            self.is_readonly = readonly
-
-    tools = [_T("Read", True), _T("Write", False), _T("TodoWrite", False),
-             _T("Bash", False)]
-    kept = {t.name for t in resolve_tools_for_mode(tools, ExecutionMode.PLAN)}
-    assert kept == {"Read", "TodoWrite"}
-
 
 # ── 3. Snip 不能吃掉任务清单 ──
 

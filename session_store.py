@@ -46,6 +46,9 @@ class SessionStore:
             "total_tokens": state.total_tokens,
             "total_cost_usd": state.total_cost_usd,
             "active_skills": list(state.active_skills),
+            # 存档时记下"最后一轮为什么结束/继续"。它**不进 LoopState**（见 load），
+            # 只作为元信息，让 --resume 时能说一句"上次结束于：输出被截断"。
+            "last_transition": state.transition.value if state.transition else None,
         }
 
         path = self._dir / f"{session_id}.json"
@@ -82,9 +85,32 @@ class SessionStore:
             total_cost_usd=data.get("total_cost_usd", 0.0),
             max_output_tokens_recovery=0,
             auto_compact_attempts=0,
+            # 刻意不还原存档里的 last_transition：恢复会话是**开始一个新任务**，
+            # 这一轮的"为什么继续"还没发生。那份旧值只用于展示（见 last_transition）。
             transition=ContinueReason.NEXT_TURN,
             active_skills=tuple(data.get("active_skills", [])),
         )
+
+    def last_transition(self, session_id: str) -> ContinueReason | None:
+        """读存档里记的「上次结束/继续的原因」，仅用于展示。
+
+        存在意义：恢复会话时能说一句"上次结束于：输出被截断（升级上限）"，
+        而不是只给一个光秃秃的轮数。
+        """
+        path = self._dir / f"{session_id}.json"
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
+        raw = data.get("last_transition")
+        if not raw:
+            return None
+        try:
+            return ContinueReason(raw)
+        except ValueError:
+            return None
 
     def list_sessions(self) -> list[str]:
         """List available session ids (most recent first)."""

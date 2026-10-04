@@ -70,3 +70,24 @@ def test_resume_state_has_next_turn_transition(store):
     sid = store.save(_make_state())
     loaded = store.load(sid)
     assert loaded.transition == ContinueReason.NEXT_TURN
+
+
+def test_save_records_why_the_session_ended(store):
+    """存档要记下「上次结束/继续的原因」，供 --resume 时展示。
+
+    注意它和上一条是**两件事**：load() 还原的是可执行状态（必须 NEXT_TURN），
+    last_transition() 读的是元信息（保留真实原因）。混成一个，就会把
+    "上一次为什么中断"当成"这一次为什么继续"。
+    """
+    state = _make_state()
+    state = state.with_transition(ContinueReason.STREAM_RETRY)
+    sid = store.save(state)
+
+    assert store.last_transition(sid) == ContinueReason.STREAM_RETRY
+    assert store.load(sid).transition == ContinueReason.NEXT_TURN
+
+
+def test_last_transition_is_none_when_not_recorded(store):
+    """没有记录时返回 None，别编一个原因出来。"""
+    assert store.last_transition(store.save(_make_state())) is None
+    assert store.last_transition("does_not_exist") is None

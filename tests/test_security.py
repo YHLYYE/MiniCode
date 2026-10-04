@@ -55,17 +55,9 @@ def test_write_inside_project_allowed():
 
 
 # ── rm 命令绕过 ──
-
-def test_rm_fr_blocked():
-    """rm -fr（标志反转）不再绕过"""
-    f = RuleFilter()
-    with pytest.raises(SecurityBlock):
-        f.check(_bash("rm -fr /"))
-    with pytest.raises(SecurityBlock):
-        f.check(_bash("rm -rf /"))
-    with pytest.raises(SecurityBlock):
-        f.check(_bash("rm --recursive /tmp"))
-
+# 注：`rm -rf / rm -fr / rm --recursive` 的参数化用例在 test_hardening.py 的
+# test_unix_rm_still_blocked 里，那里覆盖更全（含 --force）+ 还带着平台对照，
+# 所以这里不再重复一份。
 
 def test_proc_sys_blocked_at_l1():
     """/proc、/sys 现在也在 L1 层拦截（此前只在 BashTool 层）"""

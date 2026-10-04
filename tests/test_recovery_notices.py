@@ -141,3 +141,26 @@ async def test_normal_run_emits_no_notice():
     notices, events = await _run(model)
     assert notices == []
     assert any(isinstance(e, DoneEvent) for e in events)
+
+
+def test_every_recovery_reason_has_a_label():
+    """每个「非正常继续」的原因，终端都得能翻译成人话。
+
+    以后往 ContinueReason 里加值时忘了加标签，这条会先红。
+    """
+    import main
+
+    missing = [r for r in ContinueReason
+               if r is not ContinueReason.NEXT_TURN and r not in main._RECOVERY_LABELS]
+    assert missing == [], f"这些原因没有可读标签：{[r.value for r in missing]}"
+
+
+def test_every_recovery_reason_has_a_notice_path():
+    """每个恢复原因都应当有代码在设它 —— 防止留下"定义了但没人用"的枚举值。"""
+    import inspect
+
+    src = inspect.getsource(al)
+    unused = [r for r in ContinueReason
+              if r is not ContinueReason.NEXT_TURN
+              and f"ContinueReason.{r.name}" not in src]
+    assert unused == [], f"这些原因在 agent_loop 里没人设：{[r.value for r in unused]}"
