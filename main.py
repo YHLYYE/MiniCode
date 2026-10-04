@@ -21,8 +21,9 @@ import click
 from config import Config
 from core.model_adapter import ModelAdapter
 from core.agent_loop import (
-    AgentLoop, TextDelta, ToolStart, ToolResult, DoneEvent
+    AgentLoop, TextDelta, ToolStart, ToolResult, DoneEvent, RecoveryNotice
 )
+from core.state import ContinueReason
 from core.tools.files import ReadTool, WriteTool
 from core.tools.edit import EditTool
 from core.tools.shell import BashTool
@@ -186,6 +187,18 @@ def _print_header(config, mode, max_turns, max_cost):
     print("=" * 60)
 
 
+# 恢复路径对人类可读的说法。恢复本来对用户无感，但完全静默的代价是
+# 连使用者自己都不知道系统救过场 —— 所以每触发一次打一行，不打断流程。
+_RECOVERY_LABELS = {
+    ContinueReason.PROMPT_TOO_LONG_RETRY: "上下文超限",
+    ContinueReason.STREAM_RETRY: "网络瞬态错误",
+    ContinueReason.TOOL_ERROR_RETRY: "工具调用失败",
+    ContinueReason.EMPTY_RESPONSE_RETRY: "模型返回空响应",
+    ContinueReason.MAX_OUTPUT_TOKENS_UPGRADE: "输出被截断（升级上限）",
+    ContinueReason.MAX_OUTPUT_TOKENS_RECOVERY: "输出被截断（续写提示）",
+}
+
+
 def _persist_session(loop, store: SessionStore, memory_manager):
     """退出前落盘：会话 JSON + 规则式摘要。
 
@@ -293,6 +306,12 @@ async def _run_task(loop: AgentLoop, task: str):
                     f"{s.total_tokens:,} tokens, "
                     f"${s.total_cost_usd:.4f}"
                 )
+            elif isinstance(event, RecoveryNotice):
+                label = _RECOVERY_LABELS.get(event.reason, event.reason.value
+                                             if event.reason else "未知")
+                print(f"\n  [恢复] {label}"
+                      + (f"：{event.detail}" if event.detail else ""),
+                      flush=True)
     except KeyboardInterrupt:
         print("\n\n已中断。")
     except Exception as e:

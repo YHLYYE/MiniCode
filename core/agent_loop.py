@@ -10,7 +10,7 @@ import json
 from core.state import (
     Message, LoopState, ContinueReason,
     TextDelta, ToolStart, ToolResult, ToolError, DoneEvent,
-    BudgetExceeded,
+    RecoveryNotice, BudgetExceeded,
 )
 from core.model_adapter import ModelAdapter, Usage
 from core.tools.base import Tool, ToolCall
@@ -210,6 +210,10 @@ class AgentLoop:
                     self._state = self._state.with_transition(
                         ContinueReason.PROMPT_TOO_LONG_RETRY
                     )
+                    yield RecoveryNotice(
+                        ContinueReason.PROMPT_TOO_LONG_RETRY,
+                        "上下文超限，已强制压缩后重试",
+                    )
                     continue
                 # 瞬态错误（网络/超时/限流）→ 指数退避重试
                 if self._is_transient_error(e) and stream_retries < _STREAM_RETRY_MAX:
@@ -230,7 +234,12 @@ class AgentLoop:
                     backoff = _STREAM_RETRY_BASE_DELAY * (2 ** (stream_retries - 1))
                     await asyncio.sleep(backoff)
                     self._state = self._state.with_transition(
-                        ContinueReason.NEXT_TURN
+                        ContinueReason.STREAM_RETRY
+                    )
+                    yield RecoveryNotice(
+                        ContinueReason.STREAM_RETRY,
+                        f"已退避 {backoff:.0f}s 后重试"
+                        f"（第 {stream_retries}/{_STREAM_RETRY_MAX} 次）",
                     )
                     continue
                 raise
@@ -258,6 +267,13 @@ class AgentLoop:
                     await self._record_task_done("terminated: max_tokens")
                     yield DoneEvent(self._state)
                     return
+                yield RecoveryNotice(
+                    self._state.transition,
+                    "已把输出上限升到 64K"
+                    if self._state.transition
+                    is ContinueReason.MAX_OUTPUT_TOKENS_UPGRADE
+                    else "已注入断点续写提示",
+                )
                 continue
 
             # ── 4. Add assistant message (with tool_calls for OpenAI format) ──
@@ -287,6 +303,14 @@ class AgentLoop:
                         content=("[你的上一轮没有任何输出。请给出最终答案，"
                                  "或调用工具继续推进。]"),
                     ))
+                    self._state = self._state.with_transition(
+                        ContinueReason.EMPTY_RESPONSE_RETRY
+                    )
+                    yield RecoveryNotice(
+                        ContinueReason.EMPTY_RESPONSE_RETRY,
+                        f"已提醒它继续"
+                        f"（第 {empty_response_retries}/{_EMPTY_RESPONSE_MAX_RETRIES} 次）",
+                    )
                     continue
                 await self._record_task_done("terminated: empty response")
                 yield DoneEvent(self._state)
@@ -420,7 +444,13 @@ class AgentLoop:
                     ),
                 )
                 self._state = self._state.add_message(recovery_msg)
-                self._state = self._state.with_transition(ContinueReason.NEXT_TURN)
+                self._state = self._state.with_transition(
+                    ContinueReason.TOOL_ERROR_RETRY
+                )
+                yield RecoveryNotice(
+                    ContinueReason.TOOL_ERROR_RETRY,
+                    f"已把 {len(tool_errors)} 条错误回喂给模型，让它换方案",
+                )
                 continue
 
             # ── 8. Continue to next turn ──

@@ -9,6 +9,11 @@ class ContinueReason(Enum):
     PROMPT_TOO_LONG_RETRY = "ptl_retry"
     MAX_OUTPUT_TOKENS_UPGRADE = "mot_upgrade"
     MAX_OUTPUT_TOKENS_RECOVERY = "mot_recovery"
+    # 下面三个以前都写成 NEXT_TURN，跟"正常继续"分不出来 ——
+    # 于是"这一轮为什么继续"这个信号对这三条恢复路径是失效的。
+    STREAM_RETRY = "stream_retry"           # 网络瞬态错误 → 退避重试
+    TOOL_ERROR_RETRY = "tool_error_retry"   # 工具报错 → 把错误回喂给模型
+    EMPTY_RESPONSE_RETRY = "empty_retry"    # 模型返回空响应 → 提醒它继续
 
 
 @dataclass(frozen=True)
@@ -89,6 +94,17 @@ class ToolError:
 @dataclass
 class DoneEvent:
     state: LoopState
+
+
+@dataclass
+class RecoveryNotice:
+    """某条恢复路径刚刚把这一轮救了回来。
+
+    为什么要有这个事件：恢复路径的设计目标是"对用户无感"，但完全静默的代价
+    是**连使用者自己都不知道它触发过**。这个事件让恢复变得可观测，且不打断流程。
+    """
+    reason: ContinueReason
+    detail: str = ""
 
 
 class BudgetExceeded(Exception):
