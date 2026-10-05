@@ -6,6 +6,7 @@ Core principle: The model is the sole decision-maker. No state machines, no DAGs
 
 import asyncio
 import json
+import re
 
 from core.state import (
     Message, LoopState, ContinueReason,
@@ -25,6 +26,18 @@ MAX_RESULT_CHARS = 30_000  # 单条工具结果超过此值则截断（防上下
 # ── Stream retry (transient network errors) ──
 _STREAM_RETRY_MAX = 3           # 瞬态错误最大重试次数
 _STREAM_RETRY_BASE_DELAY = 1.0  # 指数退避基准延迟（秒）
+
+_TRANSIENT_KEYWORDS = (
+    "connection", "reset", "timed out", "timeout", "temporary",
+    "unavailable", "rate limit", "broken pipe", "network",
+)
+# 状态码必须带上下文才算数。早先是对整条消息做裸子串匹配，于是
+# "Error code: 400 - max_tokens must be <= 5000" 因为串里含 "500" 被判成瞬态，
+# 一个必然失败的请求被白重试 3 次（每次还各带 1/2/4 秒退避）。
+_TRANSIENT_STATUS_RE = re.compile(
+    r"\b(?:status|http|error code|code)\b\D{0,12}(429|500|502|503|504)\b"
+    r"|^\D{0,3}(429|500|502|503|504)\b"
+)
 
 # ── Empty response guard ──
 _EMPTY_RESPONSE_MAX_RETRIES = 2  # 模型返回空响应时，先提醒它两次再终止
@@ -218,7 +231,11 @@ class AgentLoop:
                 # 瞬态错误（网络/超时/限流）→ 指数退避重试
                 if self._is_transient_error(e) and stream_retries < _STREAM_RETRY_MAX:
                     stream_retries += 1
-                    # 半截输出已显示但未入状态 → 落盘 + 注入续写提示
+                    # 半截输出已经流给用户看了，但还没进 state → 回填进 state
+                    # （注意：是进上下文，不是写磁盘；真正落盘只在退出/`/save`），
+                    # 再注入一条续写提示，让模型接着写而不是重头写。
+                    # 代价：这次断掉的请求拿不到 usage（usage 在最后一个 chunk
+                    # 才给），所以它消耗的 token 不计入账本 —— 护栏会略微少算。
                     if assistant_text_parts:
                         partial = "".join(assistant_text_parts)
                         self._state = self._state.add_message(
@@ -561,13 +578,13 @@ class AgentLoop:
         return "400" in msg and any(k in msg for k in ("context", "token", "length"))
 
     def _is_transient_error(self, error: Exception) -> bool:
-        """Detect transient errors worth retrying (network/timeout/rate-limit)."""
+        """Detect transient errors worth retrying (network/timeout/rate-limit).
+
+        只重试**可能自愈**的错误。判错的代价是不对称的：
+        把永久错误当瞬态 → 白烧 3 次请求 + 7 秒退避；把瞬态当永久 → 任务直接失败。
+        所以这里宽松认关键词，但状态码必须带上下文（见 _TRANSIENT_STATUS_RE）。
+        """
         msg = str(error).lower()
-        return any(
-            keyword in msg
-            for keyword in (
-                "connection", "reset", "timed out", "timeout", "temporary",
-                "unavailable", "rate limit", "broken pipe", "network",
-                "429", "500", "502", "503", "504",
-            )
-        )
+        if _TRANSIENT_STATUS_RE.search(msg):
+            return True
+        return any(keyword in msg for keyword in _TRANSIENT_KEYWORDS)

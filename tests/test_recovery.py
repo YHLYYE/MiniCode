@@ -181,7 +181,7 @@ class FlakyModel:
 
 @pytest.mark.asyncio
 async def test_stream_interruption_saves_partial_and_resumes(monkeypatch):
-    """网络中断半截输出 → 落盘 + 注入续写提示 + 重试完成"""
+    """网络中断半截输出 → 回填进 state + 注入续写提示 + 重试完成"""
     from core.state import DoneEvent
 
     monkeypatch.setattr("core.agent_loop._STREAM_RETRY_BASE_DELAY", 0)
@@ -201,7 +201,7 @@ async def test_stream_interruption_saves_partial_and_resumes(monkeypatch):
     assert done, "应正常完成（重试后）"
     state = done[0].state
 
-    # 半截内容已落盘（之前会丢失）
+    # 半截内容已回填进 state（之前会丢：用户看得到、模型下一轮却不知道）
     assert any(
         "I suggest using" in m.content
         for m in state.messages if m.role == "assistant"
@@ -246,9 +246,28 @@ def test_is_transient_error():
     assert loop._is_transient_error(Exception("Read timed out"))
     assert loop._is_transient_error(Exception("HTTP 429 rate limit exceeded"))
     assert loop._is_transient_error(Exception("503 Service Unavailable"))
+    assert loop._is_transient_error(Exception("Error code: 502 Bad Gateway"))
+    assert loop._is_transient_error(Exception("status 500 internal error"))
     # 永久错误不重试
     assert not loop._is_transient_error(Exception("invalid api key"))
     assert not loop._is_transient_error(Exception("400 bad request"))
+    assert not loop._is_transient_error(Exception("Error code: 404 not found"))
+
+
+def test_transient_detection_does_not_match_bare_numbers():
+    """状态码要带上下文 —— 裸子串匹配会把参数值里的 "500" 当成 50x。
+
+    实测过："Error code: 400 - max_tokens must be <= 5000" 曾被判成瞬态，
+    于是一个**必然失败**的请求照样重试 3 次，白等 1+2+4 秒。
+    """
+    loop = _make_loop()
+    assert not loop._is_transient_error(
+        Exception("Error code: 400 - max_tokens must be <= 5000"))
+    assert not loop._is_transient_error(
+        Exception("Error code: 400 - invalid request: 500 items"))
+    # 但真正带上下文的状态码仍然认
+    assert loop._is_transient_error(Exception("Error code: 503 unavailable"))
+    assert loop._is_transient_error(Exception("502 Bad Gateway"))
 
 
 def test_strip_orphaned_tool_calls():

@@ -81,7 +81,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 194 个测试
+└── tests/                     # 195 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -175,7 +175,7 @@ class ContinueReason(Enum):
 1. **工具执行失败** → 注入错误上下文回消息尾部，下一轮继续（agent_loop.py §7）
 2. **Prompt 超长** → 强制压缩后重试（`PROMPT_TOO_LONG_RETRY`）
 3. **输出 token 打满** → 内部三档升级：先把 `max_output_tokens` 8K → 64K 静默重试一次；仍被截断则注入「从断点续写」提示，最多 3 次；两档都用尽才放弃（`MAX_OUTPUT_TOKENS_UPGRADE` / `MAX_OUTPUT_TOKENS_RECOVERY`）
-4. **流式网络瞬态错误** → 指数退避重试；半截输出先落盘再由续写提示接上（永久错误直接抛，fail-closed）
+4. **流式网络瞬态错误** → 指数退避重试；半截输出**回填进 state**（进下一轮上下文，不是写磁盘）再由续写提示接上（永久错误直接抛，fail-closed）
 
 ### 2.4 核心实现
 
@@ -1431,7 +1431,7 @@ class SessionStore:
 
 | 维度 | Claude Code 源码 | MiniCode | 差异理由 |
 |------|-----------------|----------|---------|
-| 代码量 | 512,000 行 | 4,743 行（28 个 py 文件） | 教育实现，非产品 |
+| 代码量 | 512,000 行 | 4,760 行（28 个 py 文件） | 教育实现，非产品 |
 | Agent Loop | while-true + 7 恢复路径 | while-true + 4 恢复路径 | 去掉 stop_hook 和 token_budget_continuation（Python SDK 不适用） |
 | 工具数 | 55+ | 12 | 覆盖核心场景，超出范围的不做 |
 | Bash 安全 | tree-sitter AST + 23+ 检查 | 27 条正则 + 白名单 | tree-sitter 是独立项目级复杂度 |
