@@ -81,7 +81,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 195 个测试
+└── tests/                     # 201 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -143,6 +143,8 @@ class LoopState:
     turn_count: int                     # 当前轮次
     total_tokens: int                   # 累计 token 消耗
     total_cost_usd: float               # 累计美元成本（按真实模型价目算，见下）
+    cache_read_tokens: int              # 前缀缓存命中（provider 报多少记多少）
+    cache_write_tokens: int             # 前缀缓存写入
     max_output_tokens_recovery: int     # output token 升级次数
     auto_compact_attempts: int          # autocompact 重试计数
     transition: ContinueReason | None   # 本轮继续原因
@@ -154,6 +156,12 @@ class LoopState:
 > 这里曾经写死单一价格（$3/$15 每 1M），结果 1M in + 1M out 对 deepseek-chat
 > 记 $18、实际只要 $0.70（高估约 26 倍），对 claude-sonnet-4-5 又低估 1.6 倍 ——
 > 而 `--max-cost` 正是拿这个数字当护栏。
+>
+> `cache_read_tokens` / `cache_write_tokens` 是 2026-10 补的：此前 `Usage` 里
+> 声明了这两个字段却**没有任何代码给它们赋值**，于是"布局对前缀缓存友好"这句
+> 只能在文档里说、在代码里看不见。现在从 `ModelAdapter._usage_from()` 读
+> （OpenAI 兼容走 `prompt_tokens_details.cached_tokens`，Anthropic 走
+> `cache_read_input_tokens`），`accumulate_usage` 逐轮累加，收尾时打出来。
 
 ### 2.3 4 条恢复路径
 
@@ -641,6 +649,12 @@ System Prompt 里那行索引（name + description）是给模型的「廉价广
 ```
 
 于是「路由块之前的所有内容」在任务之间逐字节一致，服务端前缀缓存照常命中。
+
+> 这句话现在是**可核验的**：`Usage.cache_read_tokens` 会记下 provider 报回的
+> 缓存命中量（OpenAI 兼容在 `prompt_tokens_details.cached_tokens`，Anthropic
+> 在 `cache_read_input_tokens`），逐轮累加进 `LoopState`，收尾时打印。
+> 在此之前这两个字段只是声明，没有任何代码赋值 —— 也就是"布局照着缓存友好写"
+> 这件事无法自证，只能嘴上讲。
 
 两条硬性约束：
 
@@ -1431,7 +1445,7 @@ class SessionStore:
 
 | 维度 | Claude Code 源码 | MiniCode | 差异理由 |
 |------|-----------------|----------|---------|
-| 代码量 | 512,000 行 | 4,760 行（28 个 py 文件） | 教育实现，非产品 |
+| 代码量 | 512,000 行 | 4,806 行（28 个 py 文件） | 教育实现，非产品 |
 | Agent Loop | while-true + 7 恢复路径 | while-true + 4 恢复路径 | 去掉 stop_hook 和 token_budget_continuation（Python SDK 不适用） |
 | 工具数 | 55+ | 12 | 覆盖核心场景，超出范围的不做 |
 | Bash 安全 | tree-sitter AST + 23+ 检查 | 27 条正则 + 白名单 | tree-sitter 是独立项目级复杂度 |

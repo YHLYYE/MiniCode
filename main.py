@@ -307,11 +307,16 @@ async def _run_task(loop: AgentLoop, task: str):
                     print(f"  ({len(event.output)} chars total)", flush=True)
             elif isinstance(event, DoneEvent):
                 s = event.state
+                # 前缀缓存命中量：只在真的有数时才打，免得刷屏
+                cache = ""
+                if s.cache_read_tokens or s.cache_write_tokens:
+                    cache = (f"\n        前缀缓存: {s.cache_read_tokens:,} read"
+                             f" / {s.cache_write_tokens:,} write")
                 print(f"\n{'='*60}")
                 print(
                     f"完成: {s.turn_count} turns, "
                     f"{s.total_tokens:,} tokens, "
-                    f"${s.total_cost_usd:.4f}"
+                    f"${s.total_cost_usd:.4f}{cache}"
                 )
             elif isinstance(event, RecoveryNotice):
                 label = _RECOVERY_LABELS.get(event.reason, event.reason.value

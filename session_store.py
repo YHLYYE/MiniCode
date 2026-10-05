@@ -45,6 +45,8 @@ class SessionStore:
             "turn_count": state.turn_count,
             "total_tokens": state.total_tokens,
             "total_cost_usd": state.total_cost_usd,
+            "cache_read_tokens": state.cache_read_tokens,
+            "cache_write_tokens": state.cache_write_tokens,
             "active_skills": list(state.active_skills),
             # 存档时记下"最后一轮为什么结束/继续"。它**不进 LoopState**（见 load），
             # 只作为元信息，让 --resume 时能说一句"上次结束于：输出被截断"。
@@ -83,6 +85,8 @@ class SessionStore:
             turn_count=data.get("turn_count", 0),
             total_tokens=data.get("total_tokens", 0),
             total_cost_usd=data.get("total_cost_usd", 0.0),
+            cache_read_tokens=data.get("cache_read_tokens", 0),
+            cache_write_tokens=data.get("cache_write_tokens", 0),
             max_output_tokens_recovery=0,
             auto_compact_attempts=0,
             # 刻意不还原存档里的 last_transition：恢复会话是**开始一个新任务**，

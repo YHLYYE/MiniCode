@@ -184,10 +184,7 @@ class ModelAdapter:
             #    include_usage 的最终 chunk 是 choices=[] 但带 usage，
             #    若先 `if not chunk.choices: continue` 会把用量丢掉（计费归零）。
             if getattr(chunk, "usage", None):
-                usage_data = {
-                    "input_tokens": chunk.usage.prompt_tokens or 0,
-                    "output_tokens": chunk.usage.completion_tokens or 0,
-                }
+                usage_data = self._usage_from(chunk.usage)
 
             if not chunk.choices:
                 continue
@@ -237,5 +234,33 @@ class ModelAdapter:
             usage=Usage(
                 input_tokens=usage_data.get("input_tokens", 0),
                 output_tokens=usage_data.get("output_tokens", 0),
+                cache_read_tokens=usage_data.get("cache_read_tokens", 0),
+                cache_write_tokens=usage_data.get("cache_write_tokens", 0),
             ),
         )
+
+    @staticmethod
+    def _usage_from(raw) -> dict:
+        """把各家的 usage 对象拍平成我们自己的四个计数。
+
+        前缀缓存命中量各家字段不一样，这里都认：
+        - OpenAI 兼容 / DeepSeek：`usage.prompt_tokens_details.cached_tokens`
+        - Anthropic：`usage.cache_read_input_tokens` / `cache_creation_input_tokens`
+
+        拿不到就是 0，不猜。**这两个字段以前在 `Usage` 里声明了却从没被填过** ——
+        于是"前缀缓存到底省了多少 token"在自己代码里根本测不出来，只能嘴上说
+        "布局对缓存友好"。现在它是可读出来的数。
+        """
+        details = getattr(raw, "prompt_tokens_details", None)
+        return {
+            "input_tokens": getattr(raw, "prompt_tokens", 0) or 0,
+            "output_tokens": getattr(raw, "completion_tokens", 0) or 0,
+            "cache_read_tokens": (
+                getattr(details, "cached_tokens", 0)
+                or getattr(raw, "cache_read_input_tokens", 0)
+                or 0
+            ),
+            "cache_write_tokens": (
+                getattr(raw, "cache_creation_input_tokens", 0) or 0
+            ),
+        }

@@ -44,6 +44,10 @@ class LoopState:
     turn_count: int = 0
     total_tokens: int = 0
     total_cost_usd: float = 0.0
+    # 前缀缓存命中量（provider 报多少记多少）。它的用途只有一个：让
+    # "布局对前缀缓存友好"这句话变成可核验的数字，而不是口头承诺。
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     max_output_tokens_recovery: int = 0
     auto_compact_attempts: int = 0
     transition: ContinueReason | None = None
@@ -76,6 +80,14 @@ class LoopState:
             self,
             total_tokens=new_tokens,
             total_cost_usd=round(self.total_cost_usd + cost_usd, 6),
+            cache_read_tokens=(
+                self.cache_read_tokens
+                + (getattr(usage, "cache_read_tokens", 0) or 0)
+            ),
+            cache_write_tokens=(
+                self.cache_write_tokens
+                + (getattr(usage, "cache_write_tokens", 0) or 0)
+            ),
         )
 
     def add_external_usage(self, tokens: int, cost_usd: float) -> "LoopState":
