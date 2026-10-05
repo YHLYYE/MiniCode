@@ -1449,7 +1449,7 @@ class SessionStore:
 
 | 维度 | Claude Code 源码 | MiniCode | 差异理由 |
 |------|-----------------|----------|---------|
-| 代码量 | 512,000 行 | 4,839 行（29 个 py 文件） | 教育实现，非产品 |
+| 代码量 | 512,000 行 | 4,846 行（29 个 py 文件） | 教育实现，非产品 |
 | Agent Loop | while-true + 7 恢复路径 | while-true + 4 恢复路径 | 去掉 stop_hook 和 token_budget_continuation（Python SDK 不适用） |
 | 工具数 | 55+ | 12 | 覆盖核心场景，超出范围的不做 |
 | Bash 安全 | tree-sitter AST + 23+ 检查 | 27 条正则 + 白名单 | tree-sitter 是独立项目级复杂度 |
