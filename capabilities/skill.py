@@ -3,36 +3,21 @@
 Reference: Claude Code's Skill system (how-claude-code-works, ch09)
 Core insight: Skills are NOT an independent subsystem. They are context
 modifiers wrapped in the same tool protocol — the Skill tool's output
-is injected as a tool_result at the tail of the message list, keeping
-the System Prompt unchanged → Prompt Cache 100% hit.
+is injected as a tool_result at the tail of the message list, so the
+System Prompt stays unchanged and the server-side prefix cache keeps hitting
+（命中量从 provider 读回，见 model_adapter._usage_from；不再写"100% 命中"，
+因为那是没测过的断言）。
 """
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from capabilities.tokenize import keyword_tokens
 
-def _tokenize(text: str) -> set[str]:
-    """Tokenize text for keyword matching (Chinese + English).
 
-    English: extract [a-zA-Z0-9_]+ words, lowercase.
-    Chinese: character bigrams over contiguous CJK runs.
-    This makes skill routing work for both languages without a dictionary.
-    """
-    tokens: set[str] = set()
+# 兼容旧引用（测试与外部都按 _tokenize 这个名字用）
+_tokenize = keyword_tokens
 
-    # English words
-    tokens.update(w.lower() for w in re.findall(r"[a-zA-Z0-9_]+", text))
-
-    # Chinese character bigrams
-    for run in re.findall(r"[一-鿿]+", text):
-        if len(run) == 1:
-            tokens.add(run)
-        else:
-            for i in range(len(run) - 1):
-                tokens.add(run[i:i + 2])
-
-    return tokens
 
 
 @dataclass

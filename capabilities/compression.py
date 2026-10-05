@@ -17,7 +17,14 @@ from dataclasses import dataclass
 
 from core.state import LoopState, Message
 
-# Token counter — uses cl100k_base (Claude + GPT compatible)
+# Token counter — 近似计量，用 OpenAI 的 cl100k_base。
+#
+# 为什么是"近似"：真正跑的模型可能是 DeepSeek / Claude，它们各有自己的分词器。
+# 实测同一句中文，cl100k 比 XLM-R 系（bge-m3 / bge-reranker 同族词表）多 50%~90%
+# （短句 19 vs 10、长句 27 vs 18），中英混排几乎相等（25 vs 25）。
+# 方向是**保守**的：中文长会话会略微提前触发压缩，不会算少了把窗口撑爆；
+# 真的超了还有 PROMPT_TOO_LONG_RETRY 兜底。
+# 早先这里写的是 "cl100k_base (Claude + GPT compatible)" —— 不准确，Claude 有自己的分词器。
 _ENCODER = tiktoken.get_encoding("cl100k_base")
 
 

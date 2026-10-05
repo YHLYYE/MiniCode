@@ -35,6 +35,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
+from capabilities.tokenize import keyword_tokens
+
 
 def _normalize(text: str) -> str:
     """Lowercase; replace punctuation/underscores with spaces; collapse ws.
@@ -46,8 +48,15 @@ def _normalize(text: str) -> str:
 
 
 def _tokenize(text: str) -> set[str]:
-    """Lowercase alphanumeric token set (punctuation stripped)."""
-    return set(_normalize(text).split())
+    """关键词集合 —— 走全项目共用的双语分词器。
+
+    这里以前是 `set(_normalize(text).split())`，而 `_normalize` 用 `[\\W_]+`
+    切分、Python 的 `\\w` **包含中文** → 中文整句不会被切开，程序性记忆的
+    关键词交集恒为空（中文经验永远搜不到）。英文路径一直是对的，所以
+    `test_procedural_search_strips_punctuation` 那种用例照样通过、掩盖了这条。
+    现在与 skill 路由共用 `capabilities/tokenize.py`。
+    """
+    return keyword_tokens(text)
 
 
 class NGramEmbeddingFunction:

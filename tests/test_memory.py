@@ -168,6 +168,37 @@ def test_chinese_content_is_searchable(tmp_path):
     assert any("空指针" in e.content for e in results)
 
 
+def test_chinese_procedural_memory_is_searchable(tmp_path):
+    """程序性记忆 + 中文 —— 这条以前是**恒空**的。
+
+    上面那条测的是情景记忆（n-gram 余弦，中文一直没问题）。程序性记忆走
+    关键词交集，而旧分词器对中文不切词（Python 的 \\w 含中文）→
+    `{'蜂巢取快递验证码摁错怎么办'}` 与语料交集为空 → 中文经验永远召回不到。
+    中文用户是主要用户，所以这是实打实的功能缺失，不是洁癖。
+    """
+    mm = MemoryManager(project_root=tmp_path)
+
+    async def run():
+        await mm.record_procedural("蜂巢取快递验证码摁错时，重新输入一次就好")
+        await mm.record_procedural("unrelated python tip")
+        return await mm.search("取快递验证码摁错", memory_type=MemoryType.PROCEDURAL)
+
+    results = asyncio.run(run())
+    assert results, "中文程序性记忆搜不到"
+    assert "蜂巢取快递" in results[0].content
+
+
+def test_keyword_tokens_are_bilingual():
+    """"共用分词器"的行为契约：英文按词、中文按字符 bigram。"""
+    from capabilities.tokenize import keyword_tokens
+
+    tokens = keyword_tokens("用 bge-m3 做 dense 检索")
+    assert {"bge", "m3", "dense"} <= tokens
+    assert "检索" in tokens          # 中文 bigram
+    # 标点与下划线都不是 token
+    assert not any(t in tokens for t in ("，", "_", "。"))
+
+
 # ── 会话摘要（此前是死代码：定义了但没人调用） ──
 
 def test_session_summary_round_trip(tmp_path):
