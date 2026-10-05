@@ -1,8 +1,8 @@
 # MiniCode — AI Coding Agent Built From Scratch
 
 > Reference: Claude Code architecture (reverse-engineered from how-claude-code-works),
-> implemented in **~3000 lines of pure Python** with **zero LangChain dependency**.
-> 151 unit tests (1 skipped), all passing.
+> implemented in **~4,850 lines of pure Python** with **zero LangChain dependency**.
+> 204 unit tests (1 skipped), all passing.
 
 A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill routing**,
 **3-tier Memory system**, **3-tier Context Compression with measurable benchmarks**,
@@ -187,7 +187,7 @@ minicode/
 
 | Decision | Rationale | Trade-off |
 |----------|-----------|-----------|
-| **No LangChain** | 3000 lines > 50K framework; every line is traceable | No automatic integration with LangSmith |
+| **No LangChain** | 4,850 lines > 50K framework; every line is traceable | No automatic integration with LangSmith |
 | **Pure-Python n-gram vector search** | ChromaDB's ONNX Runtime crashes on Windows access violation; code fields (paths, errors, function names) are mostly literal duplicates anyway | No true semantic search — FAISS at ~500ms/query would be a natural next step |
 | **Rule-based Collapse/Autocompact summaries** | Context is already full when compression triggers — can't call LLM | Lower summary quality than LLM-generated |
 | **State machine is *inside* while-true** | Model is sole decision-maker, not a programmer-defined FSM | Can't predict which path the agent will take, harder to debug |
