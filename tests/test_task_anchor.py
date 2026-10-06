@@ -5,6 +5,8 @@
 2. Plan 模式把它一起移除了 —— 只读规划模式里连待办清单都写不了
 3. Snip 会把它替换成占位符，而 _cache 只写不读 → 清单永久消失
 4. Autocompact 后会丢掉进度
+5. Collapse 既不跳过也不回灌，而摘要只抽「文件/命令/错误」→ 清单落在中间段
+   就永久消失（两级都有测试，唯独漏了中间这级）
 """
 import asyncio
 import pytest
@@ -222,3 +224,53 @@ async def test_edited_file_survives_autocompact(tmp_path):
     compacted = await compressor.force_autocompact(loop.state)
     joined = "\n".join(m.content for m in compacted.messages)
     assert "TIMEOUT = 30" in joined, "Autocompact 之后编辑结果丢了"
+
+
+# ── 7. Collapse 也要保住清单（中间那一级此前两级都没管）──
+
+def _state_with_task_list_in_middle():
+    """构造「清单落在中间段」的会话：head(3) + 中间(含清单) + tail(20)。"""
+    task_list = "## Task List\n- [x] 读 auth.py\n- [ ] 改 login\n- [ ] 跑测试"
+    msgs = (
+        Message("system", "S"),
+        Message("user", "重构 auth"),
+        Message("assistant", "好的"),
+        Message("tool", task_list, tool_call_id="c1"),   # ← 索引 3，必落在中间段
+    ) + tuple(Message("tool", f"读文件结果 {i}") for i in range(25))
+    return LoopState(messages=msgs), task_list
+
+
+@pytest.mark.asyncio
+async def test_collapse_preserves_task_list():
+    """Collapse 之前不认任务清单 —— 而摘要只抽「文件/命令/错误」，抽不到它。
+
+    Snip 有跳过、Autocompact 有回灌，唯独中间的 Collapse 两级都没有：
+    清单一旦落在中间段就永久消失。而 Collapse 的阈值（85%）低于
+    Autocompact（95%），长会话往往先经过这里。
+    """
+    state, task_list = _state_with_task_list_in_middle()
+    compressor = ContextCompressor()
+    compressor.record_task_list(task_list)
+
+    out = await compressor._collapse(state)
+    joined = "\n".join(m.content for m in out.messages)
+    assert task_list in joined, "Collapse 之后任务清单丢了"
+
+
+@pytest.mark.asyncio
+async def test_collapse_does_not_duplicate_task_list_already_in_tail():
+    """清单本来就在尾部（未被动过）时，不要重复灌一份。"""
+    task_list = "## Task List\n- [ ] 只剩一件事"
+    msgs = (
+        Message("system", "S"),
+        Message("user", "任务"),
+        Message("assistant", "ok"),
+    ) + tuple(Message("tool", f"结果 {i}") for i in range(19)) + (
+        Message("tool", task_list, tool_call_id="c9"),   # ← 落在尾部
+    )
+    compressor = ContextCompressor()
+    compressor.record_task_list(task_list)
+
+    out = await compressor._collapse(LoopState(messages=msgs))
+    hits = sum(1 for m in out.messages if m.content == task_list)
+    assert hits == 1, f"清单被重复回灌了 {hits} 次"

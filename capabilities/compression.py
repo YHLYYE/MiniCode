@@ -244,8 +244,22 @@ class ContextCompressor:
             content=f"[Collapsed {len(middle)} messages]\n{summary}",
         )
 
+        # 任务清单是长任务锚点，但它**不在摘要的抽取范围里**（摘要只抽
+        # 「改过的文件 / 跑过的命令 / 出过的错」），所以清单落在中间段时会
+        # 被永久压掉 —— 而 Collapse 的阈值（85%）低于 Autocompact（95%），
+        # 长会话往往先经过这里，恰好是最需要"总共几件事"的阶段。
+        # 所以像 Autocompact 一样显式回灌；已经在尾部保留的就不重复灌。
+        restored: tuple[Message, ...] = (summary_msg,)
+        if self._task_list and not any(
+                m.content == self._task_list for m in tail):
+            restored = (
+                summary_msg,
+                Message(role="user",
+                        content=f"[Current task list]\n{self._task_list}"),
+            )
+
         return state.with_field(
-            messages=_strip_orphaned_tool_calls(head + (summary_msg,) + tail)
+            messages=_strip_orphaned_tool_calls(head + restored + tail)
         )
 
     def _summarize_sync(self, messages: tuple[Message, ...]) -> str:
