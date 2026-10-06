@@ -39,7 +39,20 @@ class AgentTool(Tool):
                            "| team (research → coding → testing pipeline)",
         },
     }
-    is_concurrency_safe = True
+    # 并发安全**不能**用类属性一概声明：是否安全取决于运行时的 agent_type ——
+    # explore 只读，可以和其他工具并行；general / team 能写文件（team 的 coding
+    # 角色拿全量工具），同一回合里并行跑两个就可能同时改同一批文件。
+    # 基类的 `check_concurrency_safe(input)` 钩子正是为「按参数变化」准备的，
+    # 所以这里声明成 fail-closed 的 False，再由下面的钩子按 agent_type 放行。
+    is_concurrency_safe = False
+
+    def check_concurrency_safe(self, input: dict) -> bool:
+        """只有只读的 explore 允许与其他工具并行执行。
+
+        拿不准的一律按不安全处理（fail-closed）：没写 agent_type 时 default
+        是 general，同样返回 False。
+        """
+        return (input or {}).get("agent_type") == "explore"
 
     AGENT_PROFILES = {
         "explore": {
@@ -108,7 +121,12 @@ class AgentTool(Tool):
         if agent_type == "team":
             return await self._run_team(task)
 
-        profile = self.AGENT_PROFILES[agent_type]
+        profile = self.AGENT_PROFILES.get(agent_type)
+        if profile is None:
+            # 模型幻觉出非法类型时，走「子 Agent 失败」同一条路：返回一段文本让
+            # 父级看见并纠正，而不是抛 KeyError 冒到工具边界之外。
+            return (f"Unknown agent_type: {agent_type!r}. "
+                    f"Use one of {sorted(self.AGENT_PROFILES)} or 'team'.")
         async with self._semaphore:
             try:
                 result = await self._run_subagent(task, profile)
@@ -116,10 +134,15 @@ class AgentTool(Tool):
                 return f"Sub-agent ({agent_type}) failed: {e}"
         self._record_subagent_usage(result)
 
+        # 用 .get 读：任何一个提前返回都可能在某个键上缺项，而这里只是拼一行
+        # 展示用的抬头，不该让缺键把整个工具调用打成异常。
+        turns = result.get("turns", 0)
+        tokens = result.get("tokens", 0)
+        cost = result.get("cost_usd", 0.0)
         return (
-            f"[Sub-agent: {agent_type}, {result['turns']} turns, "
-            f"{result['tokens']} tokens, ${result['cost_usd']:.4f}]\n\n"
-            f"{result['output']}"
+            f"[Sub-agent: {agent_type}, {turns} turns, "
+            f"{tokens} tokens, ${cost:.4f}]\n\n"
+            f"{result.get('output', '')}"
         )
 
     # ── Team mode: research → coding → testing pipeline ──
@@ -204,7 +227,10 @@ class AgentTool(Tool):
             tools = list(self._tool_registry.values())
 
         if self._agent_factory is None:
-            return {"output": "Agent factory not configured", "turns": 0, "tokens": 0}
+            # 四个键必须齐全：execute 会把它们格式化进返回抬头。
+            # 早先这里漏了 cost_usd，于是「优雅提示」这条分支自己在格式化时崩溃。
+            return {"output": "Agent factory not configured",
+                    "turns": 0, "tokens": 0, "cost_usd": 0.0}
 
         sub = self._agent_factory(
             tools=tools,

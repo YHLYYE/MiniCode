@@ -461,7 +461,7 @@ class Tool(ABC):
 | Skill | ✅ | ✅ | - | 加载 Skill 指令 |
 | RecallMemory | ✅ | ✅ | - | 搜索历史记忆 |
 | Remember | - | ✅ | - | 写入长期记忆 |
-| Agent | - | ✅ | - | 派发子 Agent（explore/general/team） |
+| Agent | - | explore ✅ / 其余 - | - | 派发子 Agent（explore/general/team） |
 
 ### 3.3 工具执行安全包装
 
@@ -953,7 +953,13 @@ class AgentTool(Tool):
             "description": "explore=只读搜索 | general=全部工具 | team=研究→编码→验证流水线",
         },
     }
-    is_concurrency_safe = True
+    # 并发安全按 agent_type 判定，不能用类属性一概声明：
+    # explore 只读可以并行；general / team 能写文件，并行跑两个可能同时改同一批文件。
+    is_concurrency_safe = False   # 兜底 fail-closed，实际由下面的钩子决定
+
+    def check_concurrency_safe(self, input: dict) -> bool:
+        return (input or {}).get("agent_type") == "explore"
+
     _active_semaphore = asyncio.Semaphore(5)  # 并发上限
 
     AGENT_PROFILES = {
