@@ -84,7 +84,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 203 个测试
+└── tests/                     # 212 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -1485,7 +1485,7 @@ class SessionStore:
    → Tool 默认 is_concurrency_safe=False，忘记声明就串行；默认 is_readonly=False，触发权限检查。L1 正则拒绝危险命令 + 路径白名单，L2 检查参数（破坏性工具至少 MEDIUM，保证进得了 L3），L3 AI 分类（**无模型 / 异常 / 风险值非法 / JSON 解析失败 —— 四条路径一律判 HIGH**），L4 人工确认（拿不到输入也判拒绝）。Plan 模式在工具集层面物理移除写操作工具。
 
 6. **"你怎么知道安全检查真的生效？"**（推荐主动讲的真实故事）
-   → 我第一次加固时把 RuleFilter 和 BashTool 里两份重复的危险命令正则合并成一份，顺手把 `import re` 带走了。**159 个测试全绿，但 Bash 工具其实每次调用都抛 NameError** —— 因为没有任何一个测试真正执行过 Bash 工具本体，只测了规则函数。这暴露出两个问题：一是重复代码合并时的隐性依赖，二是**测试覆盖的是"我写的函数"而不是"用户能走的路径"**。
+   → 我第一次加固时把 RuleFilter 和 BashTool 里两份重复的危险命令正则合并成一份，顺手把 `import re` 带走了。**当时 159 条测试全绿，但 Bash 工具其实每次调用都抛 NameError** —— 因为没有任何一个测试真正执行过 Bash 工具本体，只测了规则函数。这暴露出两个问题：一是重复代码合并时的隐性依赖，二是**测试覆盖的是"我写的函数"而不是"用户能走的路径"**。
    → 同一个自检里还查出：L3 解析失败回落到 MEDIUM，而 `authorize()` 放行 MEDIUM，等于模型输出散文（"I cannot help with that"）时工具反而被自动批准 —— 这跟文件头写的 fail-closed 是反的。
    → 修完之后我把三条修复**逐条反向验证**：把 bug 放回去，对应测试必须变红（一次注入三处，8 条测试同时红，其余 177 条不受影响），红不起来的测试就删掉 —— 只记录现状、拦不住回归的测试没有价值。
 
