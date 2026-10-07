@@ -130,6 +130,9 @@ class AgentLoop:
         self._current_task = task
         self._task_errors = []
         self._fix_evidence = None
+        # 用户纠正先落记忆：它是"不可从代码推导"的那类信息，价值高于
+        # 工具报错/任务完成这类模型自己也能推出来的记录。
+        await self._capture_user_correction(task)
         system_prompt = self._resolve_system_prompt(task)
         if resume_state:
             state = resume_state
@@ -169,6 +172,37 @@ class AgentLoop:
             return self._system_prompt_factory(task) or self._system_prompt
         except Exception:
             return self._system_prompt
+
+    # 用户纠正的判定词。宁可漏判，不要误判 —— 误判会把普通任务当成纠正存下去。
+    _CORRECTION_MARKERS = (
+        "不要", "别再用", "别再", "别用", "不是这样", "不对", "错了", "搞错",
+        "以后都", "以后用", "改成用", "应该用", "不能用", "禁止", "不许",
+        "记住", "下次", "我说过",
+    )
+
+    async def _capture_user_correction(self, task: str) -> None:
+        """把"用户纠正"自动沉淀成程序性记忆。
+
+        为什么单独做这一条：现有的自动沉淀（工具报错、任务完成、错误→修法）都是
+        **模型自己也能从仓库推出来**的信息 —— 消融实验四版都测不出显著收益，原因就在这。
+        真正值钱的是用户偏好与纠正意见：团队约定、外部环境、历史决策，这些仓库里没有。
+        Claude Code 的 auto memory 专门把它们归成 `feedback` 一类，这里对齐这个分类。
+
+        为什么用规则不用模型：确定、零成本、可解释；误判代价只是多一条记忆。
+        三条保守约束：① 只在**有历史**时判定（纠正按定义针对上一轮，第一句任务不算）；
+        ② 只在**短消息**里判定（长描述多半是任务而不是纠正）；③ 必须命中判定词。
+        """
+        if self._memory is None or not task.strip():
+            return
+        if not (self._state and self._state.messages):
+            return
+        text = task.strip()
+        if len(text) > 200:
+            return
+        if not any(marker in text for marker in self._CORRECTION_MARKERS):
+            return
+        await self._memory.record_procedural(
+            f"用户纠正：{text}", context="user_correction")
 
     async def _query_loop(self, state: LoopState):
         """Inner loop: per-turn execution with 4 recovery paths."""

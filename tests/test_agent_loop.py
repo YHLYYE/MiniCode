@@ -502,3 +502,64 @@ async def test_no_distillation_without_a_successful_fix(tmp_path):
     hits = await mm.search("boom", memory_type=MemoryType.PROCEDURAL)
     assert hits == [], f"没修好却写了经验：{[h.content for h in hits]}"
     mm.close()
+
+
+# ── 用户纠正的自动沉淀（不可从代码推导的信息）──
+# 现有自动沉淀（工具报错 / 任务完成 / 错误→修法）都是模型自己也能从仓库推出来的信息，
+# 消融四版都测不出显著收益，原因就在这。用户纠正/团队约定才是真正值钱的那类。
+
+def _plain_plan():
+    return [[make_text("好的"), make_stop("end_turn")]]
+
+
+@pytest.mark.asyncio
+async def test_user_correction_is_sedimented_automatically(tmp_path):
+    """有历史时，用户的纠正意见应该自动落成程序性记忆。"""
+    mm = MemoryManager(project_root=tmp_path)
+    loop = AgentLoop(tools=[], model_adapter=MockModelAdapter(_plain_plan()),
+                     system_prompt="Test.", memory_manager=mm)
+    async for _ in loop.run("先看看这个仓库"):
+        pass
+    # 第二轮：用户纠正
+    loop2_model = MockModelAdapter(_plain_plan())
+    loop2 = AgentLoop(tools=[], model_adapter=loop2_model,
+                      system_prompt="Test.", memory_manager=mm)
+    loop2._state = loop.state          # 模拟 REPL：接着上一轮
+    async for _ in loop2.run("以后不要用 Tab 缩进"):
+        pass
+
+    hits = await mm.search("Tab", memory_type=MemoryType.PROCEDURAL)
+    assert any("用户纠正" in h.content for h in hits), [h.content for h in hits]
+    mm.close()
+
+
+@pytest.mark.asyncio
+async def test_first_message_is_never_treated_as_a_correction(tmp_path):
+    """第一句任务里出现"不要"也不算纠正 —— 纠正按定义针对上一轮。"""
+    mm = MemoryManager(project_root=tmp_path)
+    loop = AgentLoop(tools=[], model_adapter=MockModelAdapter(_plain_plan()),
+                     system_prompt="Test.", memory_manager=mm)
+    async for _ in loop.run("不要用 Tab，帮我检查这个文件"):
+        pass
+    hits = await mm.search("Tab", memory_type=MemoryType.PROCEDURAL)
+    assert not any("用户纠正" in h.content for h in hits), [h.content for h in hits]
+    mm.close()
+
+
+@pytest.mark.asyncio
+async def test_long_message_with_marker_is_not_a_correction(tmp_path):
+    """长描述里带"不要"多半是任务，不是纠正（长度上限就是防这个）。"""
+    mm = MemoryManager(project_root=tmp_path)
+    loop = AgentLoop(tools=[], model_adapter=MockModelAdapter(_plain_plan()),
+                     system_prompt="Test.", memory_manager=mm)
+    async for _ in loop.run("先看看这个仓库"):
+        pass
+    long_task = "帮我重构这个模块，注意不要破坏现有接口，" + "细节" * 120
+    loop2 = AgentLoop(tools=[], model_adapter=MockModelAdapter(_plain_plan()),
+                      system_prompt="Test.", memory_manager=mm)
+    loop2._state = loop.state
+    async for _ in loop2.run(long_task):
+        pass
+    hits = await mm.search("破坏现有接口", memory_type=MemoryType.PROCEDURAL)
+    assert not any("用户纠正" in h.content for h in hits), [h.content for h in hits]
+    mm.close()
