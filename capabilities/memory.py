@@ -224,6 +224,24 @@ def _bm25_scores(docs: list[list[str]], query: str,
     return scores
 
 
+def _match_is_evidence(matched: set[str], min_matches: int) -> bool:
+    """命中词够不够当证据。
+
+    规则：命中数 ≥ min_matches，**或者**（min_matches > 1 且命中了 ASCII 标识符）。
+
+    为什么给 ASCII 标识符开一个口子：代码语料里真正的关键词是 `docx`、`chromadb`、
+    `skill`、`pytest`、`--max-cost` 这类标识符/库名/参数名，出现**一个**就足以说明相关
+    （实测：'为什么不用 ChromaDB'、'skill 的优先级怎么定的' 都只命中一个英文词，
+    却被"≥2 词"的旧规则误杀）。而中文单 bigram（`代码`、`文件`、`模块`）太容易撞车，
+    一个不算证据 —— 实测反例全部是这种单中文 bigram 命中。
+    """
+    if len(matched) >= min_matches:
+        return True
+    if min_matches > 1:
+        return any(t.isascii() and any(c.isalnum() for c in t) for t in matched)
+    return False
+
+
 def _rank_procedural(entries: list[dict], query: str, top_k: int,
                      min_matches: int = 1) -> list[dict]:
     """程序性记忆排序 —— BM25（带 IDF）。
@@ -238,9 +256,10 @@ def _rank_procedural(entries: list[dict], query: str, top_k: int,
       BM25 + 余弦 RRF    top1 0.67  top3 0.87  AUC 0.646   ← 融合反而最差，不采纳
     融合稀释了单路强打分器 —— 与 RAG 项目里"RRF 提召回、降排序质量"同因。
 
-    `min_matches`：严格模式（注入用）要求**至少命中 2 个词**。为什么不靠分数门槛：
-    BM25 分数没有上界，"统计仓库有多少行代码" 只和某条记忆共享一个「代码」
-    就能拿到正分。手动查询保持 min_matches=1（宁可多给）。
+    `min_matches`：严格模式（注入用）走 `_match_is_evidence()` 判定 —— **2 个及以上命中，
+    或者命中的是 ASCII 标识符**。为什么不靠分数门槛：BM25 分数没有上界，
+    "统计仓库有多少行代码" 只和某条记忆共享一个「代码」就能拿到正分。
+    手动查询保持 min_matches=1（宁可多给）。
     """
     if not entries:
         return []
@@ -251,34 +270,44 @@ def _rank_procedural(entries: list[dict], query: str, top_k: int,
     for entry, tokens, score in zip(entries, docs, scores):
         if score <= 0:
             continue
-        matched = len(set(tokens) & query_terms)
-        if matched < min_matches:
+        matched = set(tokens) & query_terms
+        if not _match_is_evidence(matched, min_matches):
             continue
         scored.append((entry, score * (1.0 if entry.get("success", True) else 0.5)))
     scored.sort(key=lambda x: x[1], reverse=True)
     return [e for e, _ in scored[:top_k]]
 
 
-def _rrf_fuse(ranked_lists: list[list], top_k: int, k: int = 60) -> list:
-    """按名次融合多个来源的排名（不用原始分 —— 它们量纲不同）。
+def _merge_by_rank(ranked_lists: list[list], top_k: int) -> list:
+    """跨类型合并：**按名次交错**（画像 → 各列表第 1 名 → 各列表第 2 名 → …）。
 
-    为什么要融合而不是"按类型排优先级"：早先无类型搜索是
-    `画像 + 情景 + 程序性` 直接拼接，等于**情景永远压过程序性**，
-    即使真正相关的是一条程序性经验（实测 top1 只有 0.27）。
-    各类型的分数不可比（BM25 无上界、余弦在 [-1,1]），所以只能比名次。
-    注意这与"不做 RRF 融合"不矛盾：那条结论针对的是**同一个候选集合上的两个
-    打分器**（融合会稀释强打分器）；这里是**互不相交的三类结果**，融合用来定
-    跨类型顺序。
+    为什么不用分数合并：三类分数不可比（余弦在 [-1,1]、BM25 无界）。用"组内归一化"
+    也不行 —— 只剩噪声的列表其第 1 名照样归一化成 1.0，反而会把噪声顶上来。
+
+    为什么不用 RRF：RRF 给每个列表的第 1 名同一个分数，而这里三个列表**互不相交**，
+    于是第 1 名之间恒为并列，最终由字典插入顺序决定 —— 等于又回到"按类型定优先级"。
+    交错是它的显式版本：保证任一类型的第 1 名，排在任意类型的第 2 名之前。
+
+    前提：各列表已经过自己的门槛过滤（噪声不会以"第 1 名"的身份混进来）。
+    另外这也修掉了早先"`画像 + 情景 + 程序性` 直接拼接"的老问题 —— 那时情景永远
+    压过程序性（实测 top1 只有 0.27）。
     """
-    fused: dict[str, float] = {}
-    by_id: dict[str, object] = {}
-    for ranked in ranked_lists:
-        for rank, item in enumerate(ranked):
+    seen: set = set()
+    out: list = []
+    longest = max((len(lst) for lst in ranked_lists), default=0)
+    for rank in range(longest):
+        for lst in ranked_lists:
+            if rank >= len(lst):
+                continue
+            item = lst[rank]
             key = getattr(item, "id", None) or getattr(item, "content", str(rank))
-            by_id.setdefault(key, item)
-            fused[key] = fused.get(key, 0.0) + 1.0 / (k + rank + 1)
-    order = sorted(fused.items(), key=lambda kv: -kv[1])
-    return [by_id[key] for key, _ in order[:top_k]]
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(item)
+            if len(out) >= top_k:
+                return out
+    return out
 
 
 _MIN_SIMILARITY = 0.01  # substring-level overlap floor for episodic search
@@ -456,7 +485,7 @@ class JSONMemoryStore(MemoryStore):
         # 无类型过滤 → 三类各出一份排名再**按名次融合**（不比原始分：余弦有界、
         # BM25 无界）。以前是三类直接拼接，等于情景永远压过程序性。
         strict = min_similarity is not None
-        return _rrf_fuse([
+        return _merge_by_rank([
             self._search_profile(query),
             self._search_episodic(query, top_k, min_similarity),
             self._search_procedural(query, top_k, strict=strict),
@@ -705,7 +734,7 @@ class SQLiteMemoryStore(MemoryStore):
         #      （实测 top1 只有 0.27），又让返回条数最多到 2~3 倍 top_k。
         # 分数不可比（余弦有界 / BM25 无界），所以融合只比名次。
         strict = min_similarity is not None
-        return _rrf_fuse([
+        return _merge_by_rank([
             self._search_profile(query),
             [_dict_to_entry(e)
              for e in _rank_episodic(self._load_type(MemoryType.EPISODIC),

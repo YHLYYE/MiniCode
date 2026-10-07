@@ -58,6 +58,29 @@ MEMORIES: list[dict] = [
     {"id": "e4", "type": "episodic", "content": "Edited core/agent_loop.py"},
     {"id": "e5", "type": "episodic", "content": "Task: 补记忆去重与提炼 | 9 turns"},
     {"id": "e6", "type": "episodic", "content": "Tool errors: - Grep: path outside project | 2 turns"},
+    # —— 扩容：真实的记忆库不会只有十几条。条目多了 IDF 才有区分度，
+    #    "测试/文件/代码"这类通用词的权重才会被压下去。
+    {"id": "p7", "type": "procedural",
+     "content": "BashTool 的 NameError 修完要补集成测试，否则测试全绿也可能整条路径是死的"},
+    {"id": "p8", "type": "procedural",
+     "content": "改完 skill 的 frontmatter 要跑 test_routing_wiring，路由块压在提示词末尾"},
+    {"id": "p9", "type": "procedural",
+     "content": "子 Agent 的工具表里没有 Agent 工具，这是防递归的结构性做法"},
+    {"id": "p10", "type": "procedural",
+     "content": "压缩链三级阈值 70/85/95，任务清单要在每一级都跳过或回灌"},
+    {"id": "p11", "type": "procedural",
+     "content": "Windows 上 ONNX 版的 ChromaDB 会崩，记忆检索因此改用纯 Python 字面打分"},
+    {"id": "p12", "type": "procedural",
+     "content": "litellm 的价目表要按 model 查，写死单价会让 --max-cost 护栏失效"},
+    {"id": "p13", "type": "procedural",
+     "content": "同名技能按 priority 优先级裁决：高的覆盖低的，相同则后注册的赢"},
+    {"id": "e7", "type": "episodic", "content": "Task: 修 skill 路由优先级 | 4 turns"},
+    {"id": "e8", "type": "episodic", "content": "Edited capabilities/memory.py"},
+    {"id": "e9", "type": "episodic",
+     "content": "Tool errors: - Write: permission denied | 2 turns"},
+    {"id": "e10", "type": "episodic", "content": "Task: 给压缩链补测试 | 6 turns"},
+    {"id": "e11", "type": "episodic", "content": "Edited core/agent_loop.py"},
+    {"id": "e12", "type": "episodic", "content": "Task: 修成本护栏 | 11 turns | 76k tokens"},
 ]
 
 # 每条查询给出"应该命中"的记忆 id（可多条）
@@ -78,6 +101,13 @@ CASES: list[tuple[str, set[str]]] = [
     ("上次那个装不上的依赖", {"p1"}),
     ("怎么让跑测试的时候别联网", {"p4"}),
     ("提交前怎么避免把调试代码带上去", {"p5"}),
+    # 扩容后新增的用例：既考字面，也考"通用词不该压过关键词"
+    ("skill 的优先级怎么定的", {"p13"}),
+    ("防递归是怎么保证的", {"p9"}),
+    ("压缩阈值是多少", {"p10"}),
+    ("为什么不用 ChromaDB", {"p11"}),
+    ("max-cost 护栏为什么会失效", {"p12"}),
+    ("上次动过 memory.py 吗", {"e8"}),
 ]
 
 # 反例：这些任务在本语料里**没有**相关记忆，打分器不该给出高分。

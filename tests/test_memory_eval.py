@@ -18,10 +18,12 @@ from capabilities.memory import (MEMORY_INJECT_MIN_SIMILARITY,  # noqa: E402
 
 _CONTENT_BY_ID = {m["id"]: m["content"] for m in MEMORIES}
 # 及格线取实测值往下留一点余量，掉下来就该有人看。两组数字对应两种消费方：
-#   自动注入（严格）：top1 0.40 / top3 0.67，**反例零漏**（宁缺毋滥）
-#   手动检索（宽松）：top1 0.27 / top3 0.73，反例 6/8 会漏（宁可多给，模型自己筛）
-MIN_TOP3_STRICT, MIN_TOP1_STRICT = 0.60, 0.30
-MIN_TOP3_LOOSE = 0.70
+#   自动注入（严格）：top1 0.52 / top3 0.86，**反例零漏**（宁缺毋滥）
+#   手动检索（宽松）：top1 0.19 / top3 0.81，反例 8/8 会漏（宁可多给，模型自己筛）
+# 注入侧从 0.40/0.67 提到 0.52/0.86，靠三件事：融合从按名次 RRF 改成按名次交错、
+# "≥2 词命中"改成"≥2 词或命中 ASCII 标识符"、评测语料从 12 条扩到 24 条（IDF 才有区分度）。
+MIN_TOP3_STRICT, MIN_TOP1_STRICT = 0.80, 0.45
+MIN_TOP3_LOOSE = 0.75
 
 
 @pytest.mark.asyncio
