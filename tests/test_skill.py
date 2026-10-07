@@ -125,3 +125,71 @@ def test_skill_tool_fuzzy_match():
     result = asyncio.run(tool.execute("code review"))
     assert "not found" in result
     assert "code-review" in result
+
+
+# ── 同名覆盖：priority 必须真的说话 ──
+# 回归背景：注册原来是直接 `registry[name] = skill`，于是 priority 只在没人调用的
+# resolve() 里被读到 —— 等于装饰字段。"项目级覆盖内置"实际靠注册顺序碰巧成立。
+
+def test_same_name_override_follows_priority():
+    ss = SkillSystem()
+    ss.register_builtin(Skill(name="x", description="内置版",
+                              full_instructions="A", priority=10))
+    ss.register_builtin(Skill(name="x", description="项目版",
+                              full_instructions="B", priority=20))
+    assert ss.get("x").description == "项目版"          # 高优先级覆盖
+
+    ss.register_builtin(Skill(name="x", description="低优先级后注册",
+                              full_instructions="C", priority=1))
+    assert ss.get("x").description == "项目版"          # 低优先级不许覆盖
+
+    ss.register_builtin(Skill(name="y", description="同优先级先来",
+                              full_instructions="D", priority=5))
+    ss.register_builtin(Skill(name="y", description="同优先级后来",
+                              full_instructions="E", priority=5))
+    assert ss.get("y").description == "同优先级后来"    # 同优先级后者赢
+
+
+def test_real_skills_keep_priority_order_of_sources(tmp_path):
+    """内置(10) 先注册、项目级(20) 后注册 → 项目级胜；顺序反过来结论不变。"""
+    import pathlib
+
+    skills_dir = pathlib.Path(__file__).parent.parent / "skills"
+    for order in ("builtin_first", "project_first"):
+        ss = SkillSystem()
+        register = [
+            (skills_dir, 10),
+            (tmp_path, 20),
+        ]
+        if order == "project_first":
+            register.reverse()
+        for directory, priority in register:
+            if directory is tmp_path:
+                override = directory / "code_review.md"
+                override.write_text(
+                    "---\nname: code-review\ndescription: 项目级覆盖版\n---\n正文",
+                    encoding="utf-8",
+                )
+            ss.register_from_source(directory, priority=priority)
+        assert ss.get("code-review").description == "项目级覆盖版", order
+
+
+def test_activated_skill_announces_declared_tools():
+    """allowed-tools 是声明式的：要让模型看见，同时写明它不具强制力。"""
+    import asyncio
+
+    from core.tools.base import SkillTool
+
+    ss = SkillSystem()
+    ss.register_builtin(Skill(name="with-tools", description="d",
+                              full_instructions="正文", allowed_tools=["Read", "Grep"]))
+    ss.register_builtin(Skill(name="no-tools", description="d",
+                              full_instructions="正文"))
+    tool = SkillTool(ss)
+
+    out = asyncio.run(tool.execute("with-tools"))
+    assert "Read" in out and "Grep" in out
+    assert "声明而非强制" in out
+
+    plain = asyncio.run(tool.execute("no-tools"))
+    assert plain == "正文"          # 没声明就不加这段噪音

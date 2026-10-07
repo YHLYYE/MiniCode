@@ -84,7 +84,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 217 个测试
+└── tests/                     # 220 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -571,6 +571,9 @@ You are a code reviewer. When invoked:
 4. For each finding: file path, line number, description, fix suggestion
 ```
 
+> `allowed-tools` 是**声明式**的：技能加载时会把这份清单告知模型（"本技能声明使用的工具：…"），
+> 但它**不裁剪工具表** —— 硬约束始终来自循环级的工具表与权限四层。别把它读成沙箱。
+
 ### 4.3 实现
 
 ```python
@@ -579,9 +582,17 @@ class SkillSystem:
         self._registry: dict[str, Skill] = {}
 
     def register_from_source(self, source_dir: Path, priority: int):
-        for skill_md in source_dir.rglob("SKILL.md"):
+        for skill_md in source_dir.rglob("*.md"):
             skill = self._parse(skill_md, priority)
-            self._registry[skill.name] = skill
+            if skill:
+                self._register(skill)
+
+    def _register(self, skill: Skill):
+        """同名覆盖按 priority 裁决：高的赢，相同则后者赢。"""
+        existing = self._registry.get(skill.name)
+        if existing is not None and skill.priority < existing.priority:
+            return
+        self._registry[skill.name] = skill
 
     def get_index_for_system_prompt(self) -> str:
         lines = ["Available skills:"]
@@ -597,12 +608,9 @@ class SkillSystem:
             return f"Skill '{skill_name}' not found. Available: {available}"
         return skill.full_instructions
 
-    def resolve(self, name: str) -> Skill | None:
-        candidates = [s for s in self._registry.values() if s.name == name]
-        if not candidates:
-            return None
-        candidates.sort(key=lambda s: s.priority, reverse=True)
-        return candidates[0]
+    def get(self, name: str) -> Skill | None:
+        """按名字查表（同名覆盖已在注册时裁决）。"""
+        return self._registry.get(name)
 ```
 
 ### 4.4 Skill 加载工具

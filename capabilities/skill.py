@@ -26,6 +26,9 @@ class Skill:
     name: str
     description: str
     full_instructions: str
+    # 声明式的"这个技能预期用哪些工具"。注意：它**不裁剪工具表** ——
+    # 真正的硬约束是循环级的工具表 + 权限四层。此字段只在激活时提示给模型，
+    # 让行为更贴合技能作者的意图（见 core/tools/base.py 的 SkillTool）。
     allowed_tools: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     boundary: str = ""
@@ -63,10 +66,24 @@ class SkillSystem:
         for md_path in source_dir.rglob("*.md"):
             skill = self._parse_skill_md(md_path, priority)
             if skill:
-                self._registry[skill.name] = skill
+                self._register(skill)
 
     def register_builtin(self, skill: Skill):
-        """Register a skill programmatically (highest priority)"""
+        """Register a skill programmatically (同样按 priority 裁决同名覆盖)"""
+        self._register(skill)
+
+    def _register(self, skill: Skill):
+        """注册并裁决同名覆盖：priority 高的赢；相同则后注册的赢。
+
+        为什么需要这一步：早先这里是直接 `self._registry[skill.name] = skill`，
+        于是 priority 只在没人调用的 resolve() 里被读到 —— 等于装饰字段。
+        "项目级覆盖内置"实际是靠**注册顺序**（main.py 先内置、后项目级）碰巧成立的，
+        注册顺序一改，覆盖方向就反过来，而代码里没有任何保护。
+        """
+        existing = self._registry.get(skill.name)
+        if existing is not None and skill.priority < existing.priority:
+            # 优先级更低 → 不覆盖已注册的那份
+            return
         self._registry[skill.name] = skill
 
     # ── Discovery (cheap index for System Prompt) ──
@@ -102,20 +119,11 @@ class SkillSystem:
             return None
         return skill.full_instructions
 
-    # ── Resolution (when same skill name exists in multiple sources) ──
+    # ── Lookup ──
 
-    def resolve(self, name: str) -> Skill | None:
-        """Find a skill by name, respecting priority order.
-
-        Higher priority value = higher precedence.
-        """
-        candidates = [
-            s for s in self._registry.values() if s.name == name
-        ]
-        if not candidates:
-            return None
-        candidates.sort(key=lambda s: s.priority, reverse=True)
-        return candidates[0]
+    def get(self, name: str) -> Skill | None:
+        """按名字取技能。同名覆盖已在注册时按 priority 裁决，这里只做查表。"""
+        return self._registry.get(name)
 
     def list_skills(self) -> list[str]:
         """Return all registered skill names"""

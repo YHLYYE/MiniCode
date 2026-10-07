@@ -106,6 +106,17 @@ class SkillTool(Tool):
                 f"Skill '{name}' not found.\n"
                 f"Available skills: {available}"
             )
+        # 技能可以在 frontmatter 里声明 allowed-tools。这只是**声明**：
+        # 工具表是循环级的，技能无法在运行时收窄它，硬约束来自工具表 + 权限四层。
+        # 把它显式写进上下文，是让模型的行为更贴合技能作者的意图。
+        skill = self._skills.get(name)
+        declared = getattr(skill, "allowed_tools", None)
+        if declared:
+            return (
+                f"[本技能声明使用的工具：{', '.join(declared)}"
+                f" —— 声明而非强制，真正的工具边界由工具表与权限四层保证]\n\n"
+                f"{instructions}"
+            )
         return instructions
 
 
