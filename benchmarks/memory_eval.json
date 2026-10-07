@@ -1,0 +1,970 @@
+{
+  "generated_at": "20261007T103801Z",
+  "n_memories": 12,
+  "results": {
+    "A 1/2/3-gram 余弦（现状）": {
+      "n": 15,
+      "auc": 0.8083333333333333,
+      "relevant_min": -0.13515290659073959,
+      "negative_max": 0.21932458134837524,
+      "top1": 0.6666666666666666,
+      "top3": 0.8666666666666667,
+      "rows": [
+        {
+          "query": "又报 No module named docx 了",
+          "expected": [
+            "e1",
+            "p1"
+          ],
+          "top3": [
+            "p1",
+            "p3",
+            "e2"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "docx 依赖装不上怎么办",
+          "expected": [
+            "p1"
+          ],
+          "top3": [
+            "e1",
+            "p1",
+            "p4"
+          ],
+          "hit1": false,
+          "hit3": true
+        },
+        {
+          "query": "重建索引",
+          "expected": [
+            "p2"
+          ],
+          "top3": [
+            "p2",
+            "p6",
+            "e5"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "改完索引要不要重跑测试",
+          "expected": [
+            "p2"
+          ],
+          "top3": [
+            "p2",
+            "p4",
+            "e1"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "NameError: name 're' is not defined",
+          "expected": [
+            "e2",
+            "p3"
+          ],
+          "top3": [
+            "p3",
+            "e2",
+            "p1"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "补一下 import re",
+          "expected": [
+            "p3"
+          ],
+          "top3": [
+            "p3",
+            "e2",
+            "e6"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "pytest 一直卡在下载",
+          "expected": [
+            "p4"
+          ],
+          "top3": [
+            "p4",
+            "e6",
+            "p3"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "怎么让测试离线跑",
+          "expected": [
+            "p4"
+          ],
+          "top3": [
+            "p4",
+            "p2",
+            "p1"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "提交之前要检查什么",
+          "expected": [
+            "p5"
+          ],
+          "top3": [
+            "p3",
+            "p5",
+            "p2"
+          ],
+          "hit1": false,
+          "hit3": true
+        },
+        {
+          "query": "sqlite 文件被占用删不掉",
+          "expected": [
+            "p6"
+          ],
+          "top3": [
+            "p6",
+            "e4",
+            "e5"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "上次改了哪个文件",
+          "expected": [
+            "e4"
+          ],
+          "top3": [
+            "p2",
+            "e5",
+            "p6"
+          ],
+          "hit1": false,
+          "hit3": false
+        },
+        {
+          "query": "记忆去重那个任务跑了多久",
+          "expected": [
+            "e5"
+          ],
+          "top3": [
+            "e5",
+            "e4",
+            "p2"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "上次那个装不上的依赖",
+          "expected": [
+            "p1"
+          ],
+          "top3": [
+            "p5",
+            "p2",
+            "e1"
+          ],
+          "hit1": false,
+          "hit3": false
+        },
+        {
+          "query": "怎么让跑测试的时候别联网",
+          "expected": [
+            "p4"
+          ],
+          "top3": [
+            "p2",
+            "p4",
+            "p6"
+          ],
+          "hit1": false,
+          "hit3": true
+        },
+        {
+          "query": "提交前怎么避免把调试代码带上去",
+          "expected": [
+            "p5"
+          ],
+          "top3": [
+            "p5",
+            "e4",
+            "p1"
+          ],
+          "hit1": true,
+          "hit3": true
+        }
+      ],
+      "negative_rows": [
+        {
+          "query": "把 README 的标题改成中文",
+          "max_score": 0.21932458134837524
+        },
+        {
+          "query": "帮这个函数加类型注解",
+          "max_score": 3.469446951953614e-18
+        },
+        {
+          "query": "统计仓库一共有多少行代码",
+          "max_score": 0.02988961227546064
+        },
+        {
+          "query": "解释一下这段话在说什么",
+          "max_score": 0.057630339567343716
+        },
+        {
+          "query": "今天天气怎么样",
+          "max_score": 0.020460424972555225
+        },
+        {
+          "query": "给项目加一个 CI 配置文件",
+          "max_score": 0.08366262241371752
+        },
+        {
+          "query": "帮我看看这个正则为什么匹配不到",
+          "max_score": 0.04804805671402232
+        },
+        {
+          "query": "把这个模块重命名一下",
+          "max_score": 0.09329962099123679
+        }
+      ]
+    },
+    "B 2/3-gram 余弦（去掉 1-gram）": {
+      "n": 15,
+      "auc": 0.8041666666666667,
+      "relevant_min": -0.05635797612428662,
+      "negative_max": 0.1451434918920602,
+      "top1": 0.7333333333333333,
+      "top3": 0.9333333333333333,
+      "rows": [
+        {
+          "query": "又报 No module named docx 了",
+          "expected": [
+            "e1",
+            "p1"
+          ],
+          "top3": [
+            "p1",
+            "p3",
+            "e2"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "docx 依赖装不上怎么办",
+          "expected": [
+            "p1"
+          ],
+          "top3": [
+            "e1",
+            "p1",
+            "p4"
+          ],
+          "hit1": false,
+          "hit3": true
+        },
+        {
+          "query": "重建索引",
+          "expected": [
+            "p2"
+          ],
+          "top3": [
+            "p2",
+            "p4",
+            "p5"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "改完索引要不要重跑测试",
+          "expected": [
+            "p2"
+          ],
+          "top3": [
+            "p2",
+            "p4",
+            "e1"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "NameError: name 're' is not defined",
+          "expected": [
+            "e2",
+            "p3"
+          ],
+          "top3": [
+            "p3",
+            "e2",
+            "p1"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "补一下 import re",
+          "expected": [
+            "p3"
+          ],
+          "top3": [
+            "p3",
+            "e2",
+            "e4"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "pytest 一直卡在下载",
+          "expected": [
+            "p4"
+          ],
+          "top3": [
+            "p4",
+            "p3",
+            "e4"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "怎么让测试离线跑",
+          "expected": [
+            "p4"
+          ],
+          "top3": [
+            "p4",
+            "p2",
+            "p1"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "提交之前要检查什么",
+          "expected": [
+            "p5"
+          ],
+          "top3": [
+            "p3",
+            "p5",
+            "p2"
+          ],
+          "hit1": false,
+          "hit3": true
+        },
+        {
+          "query": "sqlite 文件被占用删不掉",
+          "expected": [
+            "p6"
+          ],
+          "top3": [
+            "p6",
+            "e4",
+            "e5"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "上次改了哪个文件",
+          "expected": [
+            "e4"
+          ],
+          "top3": [
+            "e5",
+            "e3",
+            "p2"
+          ],
+          "hit1": false,
+          "hit3": false
+        },
+        {
+          "query": "记忆去重那个任务跑了多久",
+          "expected": [
+            "e5"
+          ],
+          "top3": [
+            "e5",
+            "e4",
+            "p2"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "上次那个装不上的依赖",
+          "expected": [
+            "p1"
+          ],
+          "top3": [
+            "p1",
+            "p2",
+            "p3"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "怎么让跑测试的时候别联网",
+          "expected": [
+            "p4"
+          ],
+          "top3": [
+            "p2",
+            "p4",
+            "e3"
+          ],
+          "hit1": false,
+          "hit3": true
+        },
+        {
+          "query": "提交前怎么避免把调试代码带上去",
+          "expected": [
+            "p5"
+          ],
+          "top3": [
+            "p5",
+            "e4",
+            "p1"
+          ],
+          "hit1": true,
+          "hit3": true
+        }
+      ],
+      "negative_rows": [
+        {
+          "query": "把 README 的标题改成中文",
+          "max_score": 0.1451434918920602
+        },
+        {
+          "query": "帮这个函数加类型注解",
+          "max_score": 0.014674181772093734
+        },
+        {
+          "query": "统计仓库一共有多少行代码",
+          "max_score": 0.03352740192100854
+        },
+        {
+          "query": "解释一下这段话在说什么",
+          "max_score": 0.057267344395337455
+        },
+        {
+          "query": "今天天气怎么样",
+          "max_score": 0.0
+        },
+        {
+          "query": "给项目加一个 CI 配置文件",
+          "max_score": 0.061638052621386795
+        },
+        {
+          "query": "帮我看看这个正则为什么匹配不到",
+          "max_score": 0.06376838382070052
+        },
+        {
+          "query": "把这个模块重命名一下",
+          "max_score": 0.09083405243909494
+        }
+      ]
+    },
+    "C BM25（带 IDF）": {
+      "n": 15,
+      "auc": 0.8875,
+      "relevant_min": 0.0,
+      "negative_max": 1.9654079188123423,
+      "top1": 0.6666666666666666,
+      "top3": 0.9333333333333333,
+      "rows": [
+        {
+          "query": "又报 No module named docx 了",
+          "expected": [
+            "e1",
+            "p1"
+          ],
+          "top3": [
+            "p1",
+            "e1",
+            "p2"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "docx 依赖装不上怎么办",
+          "expected": [
+            "p1"
+          ],
+          "top3": [
+            "e1",
+            "p1",
+            "p2"
+          ],
+          "hit1": false,
+          "hit3": true
+        },
+        {
+          "query": "重建索引",
+          "expected": [
+            "p2"
+          ],
+          "top3": [
+            "p2",
+            "p1",
+            "p3"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "改完索引要不要重跑测试",
+          "expected": [
+            "p2"
+          ],
+          "top3": [
+            "p2",
+            "p1",
+            "p4"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "NameError: name 're' is not defined",
+          "expected": [
+            "e2",
+            "p3"
+          ],
+          "top3": [
+            "p3",
+            "e2",
+            "p1"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "补一下 import re",
+          "expected": [
+            "p3"
+          ],
+          "top3": [
+            "p3",
+            "e2",
+            "p1"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "pytest 一直卡在下载",
+          "expected": [
+            "p4"
+          ],
+          "top3": [
+            "p4",
+            "p1",
+            "p2"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "怎么让测试离线跑",
+          "expected": [
+            "p4"
+          ],
+          "top3": [
+            "p4",
+            "p2",
+            "p1"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "提交之前要检查什么",
+          "expected": [
+            "p5"
+          ],
+          "top3": [
+            "p3",
+            "p5",
+            "p1"
+          ],
+          "hit1": false,
+          "hit3": true
+        },
+        {
+          "query": "sqlite 文件被占用删不掉",
+          "expected": [
+            "p6"
+          ],
+          "top3": [
+            "p6",
+            "p5",
+            "p1"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "上次改了哪个文件",
+          "expected": [
+            "e4"
+          ],
+          "top3": [
+            "p2",
+            "p6",
+            "p5"
+          ],
+          "hit1": false,
+          "hit3": false
+        },
+        {
+          "query": "记忆去重那个任务跑了多久",
+          "expected": [
+            "e5"
+          ],
+          "top3": [
+            "e5",
+            "p1",
+            "p2"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "上次那个装不上的依赖",
+          "expected": [
+            "p1"
+          ],
+          "top3": [
+            "e1",
+            "p1",
+            "p2"
+          ],
+          "hit1": false,
+          "hit3": true
+        },
+        {
+          "query": "怎么让跑测试的时候别联网",
+          "expected": [
+            "p4"
+          ],
+          "top3": [
+            "p2",
+            "p4",
+            "p1"
+          ],
+          "hit1": false,
+          "hit3": true
+        },
+        {
+          "query": "提交前怎么避免把调试代码带上去",
+          "expected": [
+            "p5"
+          ],
+          "top3": [
+            "p5",
+            "p1",
+            "p2"
+          ],
+          "hit1": true,
+          "hit3": true
+        }
+      ],
+      "negative_rows": [
+        {
+          "query": "把 README 的标题改成中文",
+          "max_score": 0.0
+        },
+        {
+          "query": "帮这个函数加类型注解",
+          "max_score": 0.0
+        },
+        {
+          "query": "统计仓库一共有多少行代码",
+          "max_score": 1.7497472073754787
+        },
+        {
+          "query": "解释一下这段话在说什么",
+          "max_score": 0.0
+        },
+        {
+          "query": "今天天气怎么样",
+          "max_score": 0.0
+        },
+        {
+          "query": "给项目加一个 CI 配置文件",
+          "max_score": 1.3735233783295242
+        },
+        {
+          "query": "帮我看看这个正则为什么匹配不到",
+          "max_score": 0.0
+        },
+        {
+          "query": "把这个模块重命名一下",
+          "max_score": 1.9654079188123423
+        }
+      ]
+    },
+    "C+ BM25 与 A 的 RRF 融合": {
+      "n": 15,
+      "auc": 0.6458333333333334,
+      "relevant_min": 0.028370221327967807,
+      "negative_max": 0.03278688524590164,
+      "top1": 0.6666666666666666,
+      "top3": 0.8666666666666667,
+      "rows": [
+        {
+          "query": "又报 No module named docx 了",
+          "expected": [
+            "e1",
+            "p1"
+          ],
+          "top3": [
+            "p1",
+            "p3",
+            "e1"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "docx 依赖装不上怎么办",
+          "expected": [
+            "p1"
+          ],
+          "top3": [
+            "e1",
+            "p1",
+            "p4"
+          ],
+          "hit1": false,
+          "hit3": true
+        },
+        {
+          "query": "重建索引",
+          "expected": [
+            "p2"
+          ],
+          "top3": [
+            "p2",
+            "p6",
+            "p4"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "改完索引要不要重跑测试",
+          "expected": [
+            "p2"
+          ],
+          "top3": [
+            "p2",
+            "p4",
+            "p1"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "NameError: name 're' is not defined",
+          "expected": [
+            "e2",
+            "p3"
+          ],
+          "top3": [
+            "p3",
+            "e2",
+            "p1"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "补一下 import re",
+          "expected": [
+            "p3"
+          ],
+          "top3": [
+            "p3",
+            "e2",
+            "p1"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "pytest 一直卡在下载",
+          "expected": [
+            "p4"
+          ],
+          "top3": [
+            "p4",
+            "p3",
+            "p1"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "怎么让测试离线跑",
+          "expected": [
+            "p4"
+          ],
+          "top3": [
+            "p4",
+            "p2",
+            "p1"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "提交之前要检查什么",
+          "expected": [
+            "p5"
+          ],
+          "top3": [
+            "p3",
+            "p5",
+            "p2"
+          ],
+          "hit1": false,
+          "hit3": true
+        },
+        {
+          "query": "sqlite 文件被占用删不掉",
+          "expected": [
+            "p6"
+          ],
+          "top3": [
+            "p6",
+            "p1",
+            "p5"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "上次改了哪个文件",
+          "expected": [
+            "e4"
+          ],
+          "top3": [
+            "p2",
+            "p6",
+            "p5"
+          ],
+          "hit1": false,
+          "hit3": false
+        },
+        {
+          "query": "记忆去重那个任务跑了多久",
+          "expected": [
+            "e5"
+          ],
+          "top3": [
+            "e5",
+            "p2",
+            "p3"
+          ],
+          "hit1": true,
+          "hit3": true
+        },
+        {
+          "query": "上次那个装不上的依赖",
+          "expected": [
+            "p1"
+          ],
+          "top3": [
+            "e1",
+            "p2",
+            "p5"
+          ],
+          "hit1": false,
+          "hit3": false
+        },
+        {
+          "query": "怎么让跑测试的时候别联网",
+          "expected": [
+            "p4"
+          ],
+          "top3": [
+            "p2",
+            "p4",
+            "p6"
+          ],
+          "hit1": false,
+          "hit3": true
+        },
+        {
+          "query": "提交前怎么避免把调试代码带上去",
+          "expected": [
+            "p5"
+          ],
+          "top3": [
+            "p5",
+            "p1",
+            "p2"
+          ],
+          "hit1": true,
+          "hit3": true
+        }
+      ],
+      "negative_rows": [
+        {
+          "query": "把 README 的标题改成中文",
+          "max_score": 0.032266458495966696
+        },
+        {
+          "query": "帮这个函数加类型注解",
+          "max_score": 0.03278688524590164
+        },
+        {
+          "query": "统计仓库一共有多少行代码",
+          "max_score": 0.032266458495966696
+        },
+        {
+          "query": "解释一下这段话在说什么",
+          "max_score": 0.03125763125763126
+        },
+        {
+          "query": "今天天气怎么样",
+          "max_score": 0.031544957774465976
+        },
+        {
+          "query": "给项目加一个 CI 配置文件",
+          "max_score": 0.032266458495966696
+        },
+        {
+          "query": "帮我看看这个正则为什么匹配不到",
+          "max_score": 0.03278688524590164
+        },
+        {
+          "query": "把这个模块重命名一下",
+          "max_score": 0.03225806451612903
+        }
+      ]
+    }
+  }
+}

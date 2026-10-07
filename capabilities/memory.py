@@ -26,6 +26,7 @@ import asyncio
 import atexit
 import hashlib
 import json
+import math
 import re
 import sqlite3
 import threading
@@ -69,15 +70,27 @@ class NGramEmbeddingFunction:
     similarity — a reasonable proxy for keyword-level memory retrieval.
     """
 
-    def __init__(self, dim: int = 1024):
+    def __init__(self, dim: int = 1024, use_unigrams: bool = True,
+                 unigram_weight: float = 1.0):
+        """use_unigrams=False 时只保留 2/3-gram。
+
+        为什么留这个开关：1-gram 让任意两段英文短文本都有非零相似度
+        （"把 README 的标题改成中文" 会和 "Task: 修 docx 依赖" 撞出 0.05），
+        是检索噪声的主要来源。默认保持老行为，实验侧才关掉它做对照。
+        """
         self.dim = dim
+        self.use_unigrams = use_unigrams
+        self.unigram_weight = unigram_weight
 
     def embed(self, text: str) -> list[float]:
         vec = [0.0] * self.dim
         text = _normalize(text)
         if not text:
             return vec
-        for n, weight in ((1, 1.0), (2, 2.0), (3, 3.0)):
+        gram_spec = ((2, 2.0), (3, 3.0))
+        if self.use_unigrams:
+            gram_spec = ((1, self.unigram_weight),) + gram_spec
+        for n, weight in gram_spec:
             for i in range(len(text) - n + 1):
                 gram = text[i:i + n]
                 h = int(hashlib.md5(gram.encode("utf-8")).hexdigest(), 16)
@@ -113,6 +126,9 @@ class MemoryEntry:
     timestamp: float = 0.0
     success: bool = True
     type: str = ""  # backward-compat alias for memory_type.value
+    # 同一条经验被重复写入的次数。写入侧按内容指纹去重：重复不是新增条目，
+    # 而是把这一条的时间戳推新、计数 +1（"最近又用到"的经验不该被裁剪掉）。
+    hit_count: int = 1
 
     @classmethod
     def make(cls, memory_type: MemoryType, content: str, **kwargs) -> "MemoryEntry":
@@ -134,6 +150,7 @@ def _entry_to_dict(entry: MemoryEntry) -> dict:
         "content": entry.content, "context": entry.context,
         "file_paths": entry.file_paths, "tags": entry.tags,
         "timestamp": entry.timestamp, "success": entry.success,
+        "hit_count": entry.hit_count,
     }
 
 
@@ -149,7 +166,18 @@ def _dict_to_entry(d: dict) -> MemoryEntry:
         file_paths=d.get("file_paths", []), tags=d.get("tags", []),
         timestamp=d.get("timestamp", 0.0), success=d.get("success", True),
         type=memory_type.value,
+        hit_count=int(d.get("hit_count", 1) or 1),
     )
+
+
+def _fingerprint(text: str) -> str:
+    """内容指纹 —— 去重用的稳定键（规范化后取短哈希）。
+
+    为什么不用原文比较：同一条经验两次写进来，空白/大小写的细微差别会让它看起来
+    是两条，于是 200 条的容量被"同一个教训"占满。
+    """
+    normalized = _normalize(text or "")
+    return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:16]
 
 
 # ── Shared ranking helpers (used by all backends) ──
@@ -159,31 +187,100 @@ def _normalize_key(s: str) -> str:
     return _normalize(s)
 
 
-def _rank_procedural(entries: list[dict], query: str, top_k: int) -> list[dict]:
-    """Keyword-overlap ranking for procedural memory (shared by backends).
+def _bm25_scores(docs: list[list[str]], query: str,
+                 k1: float = 1.2, b: float = 0.75) -> list[float]:
+    """标准 Okapi BM25（词项用项目统一的双语分词结果）。"""
+    lengths = [len(d) or 1 for d in docs]
+    avgdl = (sum(lengths) / len(lengths)) if lengths else 1.0
+    df: dict[str, int] = {}
+    for d in docs:
+        for term in set(d):
+            df[term] = df.get(term, 0) + 1
+    n = len(docs)
+    query_terms = keyword_tokens(query)
+    scores = []
+    for tokens, dl in zip(docs, lengths):
+        tf: dict[str, int] = {}
+        for t in tokens:
+            tf[t] = tf.get(t, 0) + 1
+        score = 0.0
+        for term in query_terms:
+            f = tf.get(term, 0)
+            if not f:
+                continue
+            idf = math.log(1 + (n - df.get(term, 0) + 0.5) / (df.get(term, 0) + 0.5))
+            score += idf * (f * (k1 + 1)) / (f + k1 * (1 - b + b * dl / avgdl))
+        scores.append(score)
+    return scores
 
-    Tokens are punctuation-stripped; successful entries rank above failed
-    ones (a failed attempt stays recallable, just demoted).
+
+def _rank_procedural(entries: list[dict], query: str, top_k: int,
+                     min_matches: int = 1) -> list[dict]:
+    """程序性记忆排序 —— BM25（带 IDF）。
+
+    原来是"关键词交集计数"，问题在**没有 IDF**：'报错/文件/测试' 这类高频词
+    和 `docx` 这类关键标识符同权，而程序性记忆恰恰最靠标识符和报错串。
+
+    选型来自 benchmarks/memory_scorer_eval.py 的对照实验（15 条正例 / 9 条反例）：
+      BM25（IDF）        top1 0.67  top3 0.93  AUC 0.887   ← 选它
+      2/3-gram 余弦      top1 0.73  top3 0.93  AUC 0.804
+      1/2/3-gram 余弦    top1 0.67  top3 0.87  AUC 0.808
+      BM25 + 余弦 RRF    top1 0.67  top3 0.87  AUC 0.646   ← 融合反而最差，不采纳
+    融合稀释了单路强打分器 —— 与 RAG 项目里"RRF 提召回、降排序质量"同因。
+
+    `min_matches`：严格模式（注入用）要求**至少命中 2 个词**。为什么不靠分数门槛：
+    BM25 分数没有上界，"统计仓库有多少行代码" 只和某条记忆共享一个「代码」
+    就能拿到正分。手动查询保持 min_matches=1（宁可多给）。
     """
-    query_tokens = _tokenize(query)
+    if not entries:
+        return []
+    docs = [keyword_tokens(e.get("content", "")) for e in entries]
+    scores = _bm25_scores(docs, query)
+    query_terms = keyword_tokens(query)
     scored = []
-    for e in entries:
-        text = e.get("content", "") + " " + " ".join(e.get("tags", []))
-        overlap = len(query_tokens & _tokenize(text))
-        if overlap > 0:
-            score = overlap * (1.0 if e.get("success", True) else 0.5)
-            scored.append((e, score))
+    for entry, tokens, score in zip(entries, docs, scores):
+        if score <= 0:
+            continue
+        matched = len(set(tokens) & query_terms)
+        if matched < min_matches:
+            continue
+        scored.append((entry, score * (1.0 if entry.get("success", True) else 0.5)))
     scored.sort(key=lambda x: x[1], reverse=True)
     return [e for e, _ in scored[:top_k]]
+
+
+def _rrf_fuse(ranked_lists: list[list], top_k: int, k: int = 60) -> list:
+    """按名次融合多个来源的排名（不用原始分 —— 它们量纲不同）。
+
+    为什么要融合而不是"按类型排优先级"：早先无类型搜索是
+    `画像 + 情景 + 程序性` 直接拼接，等于**情景永远压过程序性**，
+    即使真正相关的是一条程序性经验（实测 top1 只有 0.27）。
+    各类型的分数不可比（BM25 无上界、余弦在 [-1,1]），所以只能比名次。
+    注意这与"不做 RRF 融合"不矛盾：那条结论针对的是**同一个候选集合上的两个
+    打分器**（融合会稀释强打分器）；这里是**互不相交的三类结果**，融合用来定
+    跨类型顺序。
+    """
+    fused: dict[str, float] = {}
+    by_id: dict[str, object] = {}
+    for ranked in ranked_lists:
+        for rank, item in enumerate(ranked):
+            key = getattr(item, "id", None) or getattr(item, "content", str(rank))
+            by_id.setdefault(key, item)
+            fused[key] = fused.get(key, 0.0) + 1.0 / (k + rank + 1)
+    order = sorted(fused.items(), key=lambda kv: -kv[1])
+    return [by_id[key] for key, _ in order[:top_k]]
 
 
 _MIN_SIMILARITY = 0.01  # substring-level overlap floor for episodic search
 
 # 注入场景要"别吵"，手动查询要"别漏" —— 所以两个门槛分开。
-# 标定（见 tests/test_memory.py 里固化的数据）：docx 那条记忆上
-#   相关查询 0.21 / 0.40，无关查询 -0.004 / 0.039 / 0.048（情景）
-# 取 0.15 能干净分开。手动查询仍用 _MIN_SIMILARITY=0.01（宁可多给，模型自己筛）。
-MEMORY_INJECT_MIN_SIMILARITY = 0.15
+# 标定数据（固化在 tests/test_memory.py，来自 benchmarks/memory_scorer_eval.py 的语料）：
+#   真正需要情景记忆的正例，2/3-gram 余弦最低 0.111（docx 那对）
+#   反例（语料里没有相关记忆）最高 0.095
+# 取 0.10 落在两者之间。余量确实很窄 —— 这也是为什么自动注入还配了
+# "程序性至少命中 2 个词"和"每轮最多 3 条"两道限制，并且必须有开关。
+# 手动查询仍用 _MIN_SIMILARITY=0.01（宁可多给，模型自己筛）。
+MEMORY_INJECT_MIN_SIMILARITY = 0.10
 
 # 主提示词里 CLAUDE.md 的预算。参考 Claude Code 的 auto memory 加载策略
 # （MEMORY.md 前 200 行或前 25KB，先到为准），这里压得更紧：
@@ -295,7 +392,11 @@ class JSONMemoryStore(MemoryStore):
         self._procedural_path = self._dir / "procedural.json"
         self._episodic_path = self._dir / "episodic.json"
         self._profile_path = self._dir / "profile.json"
-        self._embedder = NGramEmbeddingFunction()
+        # 情景记忆用 2/3-gram（关掉 1-gram）：1-gram 让任意两段英文短文本都有
+        # 非零相似度，是检索噪声的主要来源。选型依据见 benchmarks/memory_scorer_eval.py
+        # （去掉 1-gram 后 top1 0.67→0.73、top3 0.87→0.93）。
+        self._embedder = NGramEmbeddingFunction(use_unigrams=False)
+        self._max_entries = 200     # 与 SQLiteMemoryStore 的每类上限保持一致
 
     # ── MemoryStore interface ──
 
@@ -308,7 +409,23 @@ class JSONMemoryStore(MemoryStore):
             if entry.memory_type == MemoryType.PROCEDURAL
             else self._episodic_path
         )
+        # 按内容指纹去重（与 SQLiteMemoryStore 行为一致）：重复出现的是"最近又用到"
+        # 的那条经验，不是新经验 —— 否则 200 条容量会被同一个教训占满。
+        fingerprint = _fingerprint(entry.content)
+        entries = self._load_json_list(path)
+        for e in entries:
+            if _fingerprint(e.get("content", "")) == fingerprint:
+                e["hit_count"] = int(e.get("hit_count", 1) or 1) + 1
+                e["timestamp"] = entry.timestamp
+                e["success"] = entry.success     # 同一条经验：最近一次的结果说了算
+                self._write_json_list(path, entries)
+                return
         self._store_json_list(path, _entry_to_dict(entry))
+
+    def _write_json_list(self, path: Path, entries: list[dict]) -> None:
+        self._dir.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(entries[-self._max_entries:], ensure_ascii=False, indent=2),
+                        encoding="utf-8")
 
     def search(self, memory_type: MemoryType | None, query: str,
                top_k: int, min_similarity: float | None = None) -> list[MemoryEntry]:
@@ -318,11 +435,14 @@ class JSONMemoryStore(MemoryStore):
             return self._search_procedural(query, top_k)
         if memory_type == MemoryType.EPISODIC:
             return self._search_episodic(query, top_k, min_similarity)
-        # 无类型过滤 → 三类都搜，并**统一截断到 top_k**（与 SQLiteMemoryStore 保持一致）
-        results = self._search_profile(query)
-        results += self._search_episodic(query, top_k, min_similarity)
-        results += self._search_procedural(query, top_k)
-        return results[:top_k]
+        # 无类型过滤 → 三类各出一份排名再**按名次融合**（不比原始分：余弦有界、
+        # BM25 无界）。以前是三类直接拼接，等于情景永远压过程序性。
+        strict = min_similarity is not None
+        return _rrf_fuse([
+            self._search_profile(query),
+            self._search_episodic(query, top_k, min_similarity),
+            self._search_procedural(query, top_k, strict=strict),
+        ], top_k)
 
     def set_profile(self, key: str, value: str) -> None:
         self._dir.mkdir(parents=True, exist_ok=True)
@@ -361,10 +481,12 @@ class JSONMemoryStore(MemoryStore):
 
     # ── Search backends ──
 
-    def _search_procedural(self, query: str, top_k: int) -> list[MemoryEntry]:
+    def _search_procedural(self, query: str, top_k: int,
+                           strict: bool = False) -> list[MemoryEntry]:
         entries = self._load_json_list(self._procedural_path)
         return [_dict_to_entry(e)
-                for e in _rank_procedural(entries, query, top_k)]
+                for e in _rank_procedural(entries, query, top_k,
+                                          min_matches=2 if strict else 1)]
 
     def _search_episodic(self, query: str, top_k: int,
                          min_similarity: float | None = None) -> list[MemoryEntry]:
@@ -415,7 +537,8 @@ class SQLiteMemoryStore(MemoryStore):
     def __init__(self, db_path: Path, max_entries: int = 200):
         self._db_path = db_path
         self._max_entries = max_entries
-        self._embedder = NGramEmbeddingFunction()
+        # 同上：情景记忆固定用 2/3-gram（选型依据见 benchmarks/memory_scorer_eval.py）
+        self._embedder = NGramEmbeddingFunction(use_unigrams=False)
         self._lock = threading.Lock()
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(
@@ -438,7 +561,9 @@ class SQLiteMemoryStore(MemoryStore):
                     file_paths TEXT DEFAULT '[]',
                     tags TEXT DEFAULT '[]',
                     timestamp REAL DEFAULT 0,
-                    success INTEGER DEFAULT 1
+                    success INTEGER DEFAULT 1,
+                    fingerprint TEXT DEFAULT '',
+                    hit_count INTEGER DEFAULT 1
                 );
                 CREATE INDEX IF NOT EXISTS idx_memories_type
                     ON memories(memory_type);
@@ -451,6 +576,30 @@ class SQLiteMemoryStore(MemoryStore):
                 """
             )
             self._conn.commit()
+            self._migrate()
+
+    def _migrate(self) -> None:
+        """给老库补上 fingerprint / hit_count 两列，并回填指纹。
+
+        为什么必须显式处理：老库已经存在，`CREATE TABLE IF NOT EXISTS` 不会动它 ——
+        少了这两列，去重和计数会**静默失效**（写进去的每一条都变成新条目）。
+        """
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(memories)")}
+        for name, ddl in (("fingerprint", "TEXT DEFAULT ''"),
+                          ("hit_count", "INTEGER DEFAULT 1")):
+            if name not in cols:
+                self._conn.execute(f"ALTER TABLE memories ADD COLUMN {name} {ddl}")
+        rows = self._conn.execute(
+            "SELECT rowid, content FROM memories "
+            "WHERE fingerprint IS NULL OR fingerprint = ''"
+        ).fetchall()
+        for rowid, content in rows:
+            self._conn.execute(
+                "UPDATE memories SET fingerprint = ?, "
+                "hit_count = COALESCE(hit_count, 1) WHERE rowid = ?",
+                (_fingerprint(content), rowid),
+            )
+        self._conn.commit()
 
     # ── MemoryStore interface ──
 
@@ -458,22 +607,39 @@ class SQLiteMemoryStore(MemoryStore):
         if entry.memory_type == MemoryType.USER_PROFILE:
             self.set_profile(entry.context, entry.content)
             return
+        fingerprint = _fingerprint(entry.content)
         with self._lock:
-            self._conn.execute(
-                "INSERT INTO memories "
-                "(id, memory_type, content, context, file_paths, tags, "
-                "timestamp, success) VALUES (?,?,?,?,?,?,?,?)",
-                (
-                    entry.id,
-                    entry.memory_type.value,
-                    entry.content,
-                    entry.context,
-                    json.dumps(entry.file_paths),
-                    json.dumps(entry.tags),
-                    entry.timestamp,
-                    1 if entry.success else 0,
-                ),
-            )
+            existing = self._conn.execute(
+                "SELECT id FROM memories WHERE memory_type = ? AND fingerprint = ? "
+                "LIMIT 1", (entry.memory_type.value, fingerprint),
+            ).fetchone()
+            if existing is not None:
+                # 同一条经验重复出现：不新增条目，只把时间戳推新、计数 +1
+                # （"最近又用到"的经验不该被按时间裁剪掉）
+                self._conn.execute(
+                    "UPDATE memories SET hit_count = COALESCE(hit_count, 1) + 1, "
+                    "timestamp = ?, success = ? WHERE id = ?",
+                    (entry.timestamp, 1 if entry.success else 0, existing[0]),
+                )
+            else:
+                self._conn.execute(
+                    "INSERT INTO memories "
+                    "(id, memory_type, content, context, file_paths, tags, "
+                    "timestamp, success, fingerprint, hit_count) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        entry.id,
+                        entry.memory_type.value,
+                        entry.content,
+                        entry.context,
+                        json.dumps(entry.file_paths),
+                        json.dumps(entry.tags),
+                        entry.timestamp,
+                        1 if entry.success else 0,
+                        fingerprint,
+                        1,
+                    ),
+                )
             self._prune(entry.memory_type)
             self._conn.commit()
 
@@ -485,25 +651,30 @@ class SQLiteMemoryStore(MemoryStore):
         if memory_type == MemoryType.PROCEDURAL:
             entries = self._load_type(MemoryType.PROCEDURAL)
             return [_dict_to_entry(e)
-                    for e in _rank_procedural(entries, query, top_k)]
+                    for e in _rank_procedural(
+                        entries, query, top_k,
+                        min_matches=2 if min_similarity is not None else 1)]
         if memory_type == MemoryType.EPISODIC:
             entries = self._load_type(MemoryType.EPISODIC)
             return [_dict_to_entry(e)
                     for e in _rank_episodic(entries, query, top_k, self._embedder,
                                             floor)]
-        # 无类型过滤 → 三类都搜，并统一截断到 top_k。这里原先有两个坑：
-        #   ① 把用户画像排除在外，于是 RecallMemory 永远拿不到用户偏好
-        #      （可它的描述里承诺了 "project conventions"）；
-        #   ② "每类各取 top_k 再相加"，调用方传 top_k=3 会拿到最多 6 条 —— top_k 契约失效。
-        # 顺序即优先级：画像（key 命中，最可靠）→ 情景（n-gram 余弦）→ 程序性（关键词交集）。
-        results = self._search_profile(query)
-        results += [_dict_to_entry(e)
-                    for e in _rank_episodic(self._load_type(MemoryType.EPISODIC),
-                                            query, top_k, self._embedder, floor)]
-        results += [_dict_to_entry(e)
-                    for e in _rank_procedural(self._load_type(MemoryType.PROCEDURAL),
-                                              query, top_k)]
-        return results[:top_k]
+        # 无类型过滤 → 三类各出一份排名，再按**名次**融合。两个历史坑：
+        #   ① 曾把用户画像排除在外（RecallMemory 因此永远拿不到用户偏好）；
+        #   ② 曾是"三类直接拼接 + 每类各取 top_k"，既让情景永远压过程序性
+        #      （实测 top1 只有 0.27），又让返回条数最多到 2~3 倍 top_k。
+        # 分数不可比（余弦有界 / BM25 无界），所以融合只比名次。
+        strict = min_similarity is not None
+        return _rrf_fuse([
+            self._search_profile(query),
+            [_dict_to_entry(e)
+             for e in _rank_episodic(self._load_type(MemoryType.EPISODIC),
+                                     query, top_k, self._embedder, floor)],
+            [_dict_to_entry(e)
+             for e in _rank_procedural(self._load_type(MemoryType.PROCEDURAL),
+                                       query, top_k,
+                                       min_matches=2 if strict else 1)],
+        ], top_k)
 
     def set_profile(self, key: str, value: str) -> None:
         with self._lock:
@@ -520,7 +691,7 @@ class SQLiteMemoryStore(MemoryStore):
         with self._lock:
             rows = self._conn.execute(
                 "SELECT id, memory_type, content, context, file_paths, "
-                "tags, timestamp, success FROM memories "
+                "tags, timestamp, success, hit_count FROM memories "
                 "WHERE memory_type = ? ORDER BY timestamp DESC",
                 (memory_type.value,),
             ).fetchall()
@@ -534,6 +705,7 @@ class SQLiteMemoryStore(MemoryStore):
                 "tags": json.loads(r[5] or "[]"),
                 "timestamp": r[6],
                 "success": bool(r[7]),
+                "hit_count": r[8] if len(r) > 8 else 1,
             }
             for r in rows
         ]

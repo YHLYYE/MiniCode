@@ -35,7 +35,7 @@ python main.py --resume <session_id>  # resume a saved session
 All three must pass before a change is worth reviewing:
 
 ```bash
-python -m pytest tests/ -q              # 235 tests
+python -m pytest tests/ -q              # 238 tests
 python -m pyflakes $(git ls-files '*.py')   # undefined names / unused imports
 python benchmarks/verify_claims.py      # 14 documented claims, re-measured
 ```

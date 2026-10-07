@@ -144,12 +144,18 @@ def test_procedural_search_strips_punctuation(tmp_path):
 
 
 def test_successful_memory_ranks_above_failed(tmp_path):
-    """成功经验排在失败尝试之前"""
+    """成功经验排在失败尝试之前。
+
+    注意两条记忆必须是**不同内容**：写入侧现在按内容指纹去重，同内容的
+    "失败版 + 成功版" 会被合并成一条（最近一次的结果说了算），那是刻意的。
+    """
     mm = MemoryManager(project_root=tmp_path)
 
     async def run():
-        await mm.record_episodic("deploy strategy X", success=False)
-        await mm.record_episodic("deploy strategy X", success=True)
+        await mm.record_episodic("deploy strategy X failed with timeout",
+                                 success=False)
+        await mm.record_episodic("deploy strategy X succeeded after retry",
+                                 success=True)
         return await mm.search("deploy strategy", memory_type=MemoryType.EPISODIC)
 
     results = asyncio.run(run())
@@ -359,16 +365,16 @@ async def test_empty_query_does_not_return_every_profile(tmp_path, backend):
 # ── 注入场景的相关性下限（标定数据固化在这里）──
 
 def test_ngram_similarity_separates_relevant_from_irrelevant():
-    """0.15 这个门槛不是拍的 —— 用真实数据把它钉住。
+    """0.10 这个门槛不是拍的 —— 用真实数据把它钉住。
 
-    标定用的是记忆系统自己的 n-gram 余弦：同一条记忆上，
-    相关查询 0.21 / 0.40，无关查询 -0.004 / 0.039 / 0.048。
+    标定用的是**生产配置**（2/3-gram，关掉 1-gram）：同一条记忆上，
+    相关查询 +0.111 / +0.359，无关查询 0.000 / -0.034 / 0.000。
     任何一边漂到门槛另一侧，这条测试就会红。
     """
     from capabilities.memory import (MEMORY_INJECT_MIN_SIMILARITY,
                                      NGramEmbeddingFunction)
 
-    emb = NGramEmbeddingFunction()
+    emb = NGramEmbeddingFunction(use_unigrams=False)   # 与生产配置一致
     entry = "Task: 修 docx 依赖 | 5 turns"
     relevant = [emb.similarity(q, entry) for q in
                 ("又报 No module named docx 了，怎么办", "docx 依赖装不上")]

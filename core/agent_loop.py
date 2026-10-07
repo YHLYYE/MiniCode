@@ -110,6 +110,10 @@ class AgentLoop:
         self._system_prompt_factory = system_prompt_factory
         self._compressor = ContextCompressor()
         self._permission = PermissionManager(model=model_adapter)
+        # 任务级的失败/修法追踪 —— 用来在任务结束时"提炼"一条经验：
+        # 本轮出过什么错、之后用哪个编辑修好了。（见 _record_task_done）
+        self._task_errors: list[ToolError] = []
+        self._fix_evidence: str | None = None
 
     @property
     def state(self) -> LoopState | None:
@@ -124,6 +128,8 @@ class AgentLoop:
                           enabling multi-task conversation in the same loop)
         """
         self._current_task = task
+        self._task_errors = []
+        self._fix_evidence = None
         system_prompt = self._resolve_system_prompt(task)
         if resume_state:
             state = resume_state
@@ -358,8 +364,10 @@ class AgentLoop:
                     # 同一条沉淀路径 —— 否则情景记忆里只会留下"任务完成"，
                     # 复盘时看不出这轮其实是因为工具名错了才绕路。
                     available = list(self._tools.keys())
-                    tool_errors.append(ToolError(
-                        tool_name, f"Tool not found. Available: {available}"))
+                    err = ToolError(
+                        tool_name, f"Tool not found. Available: {available}")
+                    tool_errors.append(err)
+                    self._task_errors.append(err)
                     return (tool_name, tool_call_id, tool_input, None,
                             f"Error: Tool '{tool_name}' not found. "
                             f"Available: {available}")
@@ -382,7 +390,9 @@ class AgentLoop:
                     return (tool_name, tool_call_id, tool_input, None,
                             f"Security blocked: {e}")
                 except Exception as e:
-                    tool_errors.append(ToolError(tool_name, str(e)))
+                    err = ToolError(tool_name, str(e))
+                    tool_errors.append(err)
+                    self._task_errors.append(err)
                     return (tool_name, tool_call_id, tool_input, None,
                             f"Tool error: {e}")
 
@@ -436,6 +446,7 @@ class AgentLoop:
                         # 结果前缀 "Created" 或 "Updated" 才视为成功写入
                         if result.startswith(("Created ", "Updated ")):
                             self._compressor.record_edit(file_path, content)
+                            self._note_possible_fix(tool_name, file_path, result)
                             if self._memory is not None:
                                 await self._memory.record_file_edit(file_path)
                 # Edit 成功 → 同样登记。此前只登记 Write，而改存量代码用的是
@@ -457,6 +468,7 @@ class AgentLoop:
                             current_text = ""
                         if current_text:
                             self._compressor.record_edit(file_path, current_text)
+                        self._note_possible_fix(tool_name, file_path, result)
                 # TodoWrite 成功 → 记住这份清单（Snip 跳过它、Autocompact 回灌它）
                 if tool_name == "TodoWrite" and result.startswith("## Task List"):
                     self._compressor.record_task_list(result)
@@ -568,6 +580,38 @@ class AgentLoop:
             f"{self._state.total_tokens} tokens{suffix}",
             tags=["task_summary"],
         )
+        await self._distill_fix()
+
+    def _note_possible_fix(self, tool_name: str, file_path: str, result: str) -> None:
+        """记下"出错之后第一次成功的编辑"——它是提炼经验的修法证据。
+
+        只在**本轮已经出现过失败**时才记：没有失败背景的编辑只是普通干活，
+        记下来会让提炼出来的经验变成"改了 X 文件"这种没信息量的条目。
+        """
+        if not self._task_errors or self._fix_evidence is not None:
+            return
+        self._fix_evidence = f"{tool_name} {file_path}（{result.strip()[:60]}）"
+
+    async def _distill_fix(self) -> None:
+        """把「本轮的错误 → 之后的修法」配成一条**程序性**记忆。
+
+        为什么要提炼而不是只存原始报错：只存报错，下次检索到的是一串错误文本，
+        模型还得自己猜怎么修；配上修法证据之后，这条经验才是可复用的。
+        全程不需要模型调用 —— 数据（错误列表 + 成功的编辑）本来就在循环里。
+
+        两边缺一不写：没有错误（普通任务）或错误之后没有成功编辑（没修好），
+        都不该产出经验，否则记忆里会堆噪。重复提炼由写入侧的内容指纹去重兜住。
+        """
+        if self._memory is None or not self._task_errors or not self._fix_evidence:
+            return
+        first = self._task_errors[0]
+        await self._memory.record_procedural(
+            f"{first.tool_name} 报错「{first.error[:120]}」→ 修法：{self._fix_evidence}",
+            context=self._current_task or "",
+        )
+        # 记过一次就清空，避免同一个 DoneEvent 站点重复写（写入口还有指纹去重兜底）
+        self._task_errors = []
+        self._fix_evidence = None
 
     def _is_prompt_too_long(self, error: Exception) -> bool:
         """Detect whether an API error indicates context overflow."""
