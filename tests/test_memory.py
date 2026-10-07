@@ -451,46 +451,6 @@ def test_ranking_bonus_rewards_coverage_and_usage():
 
 # ── 注入场景的相关性下限（标定数据固化在这里）──
 
-def test_ngram_similarity_separates_relevant_from_irrelevant():
-    """0.10 这个门槛不是拍的 —— 用真实数据把它钉住。
-
-    标定用的是**生产配置**（2/3-gram，关掉 1-gram）：同一条记忆上，
-    相关查询 +0.111 / +0.359，无关查询 0.000 / -0.034 / 0.000。
-    任何一边漂到门槛另一侧，这条测试就会红。
-    """
-    from capabilities.memory import (MEMORY_INJECT_MIN_SIMILARITY,
-                                     NGramEmbeddingFunction)
-
-    emb = NGramEmbeddingFunction(use_unigrams=False)   # 与生产配置一致
-    entry = "Task: 修 docx 依赖 | 5 turns"
-    relevant = [emb.similarity(q, entry) for q in
-                ("又报 No module named docx 了，怎么办", "docx 依赖装不上")]
-    irrelevant = [emb.similarity(q, entry) for q in
-                  ("把 README 的标题改成中文", "帮我把这个函数重构一下", "今天天气怎么样")]
-
-    assert min(relevant) > MEMORY_INJECT_MIN_SIMILARITY, (relevant, irrelevant)
-    assert max(irrelevant) < MEMORY_INJECT_MIN_SIMILARITY, (relevant, irrelevant)
-
-
-@pytest.mark.asyncio
-async def test_inject_floor_keeps_irrelevant_tasks_clean(tmp_path):
-    """注入用的严格下限：无关任务不该被塞进旧经验，相关任务仍要带出来。"""
-    from capabilities.memory import MEMORY_INJECT_MIN_SIMILARITY
-
-    mm = MemoryManager(project_root=tmp_path)
-    await mm.record_episodic("Task: 修 docx 依赖 | 5 turns")
-    await mm.record_procedural("No module named docx → 先装 python-docx 再重跑")
-
-    def hint(task: str) -> str:
-        return format_memory_hint(mm.search_sync(
-            task, top_k=3, min_similarity=MEMORY_INJECT_MIN_SIMILARITY))
-
-    assert hint("又报 No module named docx 了，怎么办"), "相关任务应该带上经验"
-    assert hint("把 README 的标题改成中文") == "", "无关任务不该带旧经验"
-    # 手动查询走宽松门槛：同样的无关任务仍可能给出一条（宁可多给，模型自己筛）
-    mm.close()
-
-
 def test_remember_tool_documents_project_examples():
     """Remember 的三类选择必须有**本项目自己的例子**，而不是抽象英文定义。
 

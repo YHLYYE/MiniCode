@@ -469,17 +469,40 @@ def format_memory_hint(entries: list, top_k: int = MEMORY_HINT_TOP_K,
 
 
 def _rank_episodic(entries: list[dict], query: str, top_k: int,
-                   embedder: "NGramEmbeddingFunction",
-                   min_similarity: float = _MIN_SIMILARITY) -> list[dict]:
-    """n-gram cosine ranking for episodic memory (shared by backends)."""
+                   embedder=None, min_similarity: float | None = None) -> list[dict]:
+    """情景记忆排序 —— 也用 **BM25**，与程序性共用同一条打分与证据规则。
+
+    为什么把原来的 2/3-gram 余弦换掉：合并顺序修正之后重做 A/B（24 条记忆 / 21 条用例）：
+
+      情景 = 余弦（原状）：严格 top1 0.86 / top3 0.95 / 反例零漏；宽松 top1 0.81 / top3 0.90 / 反例漏 8
+      情景 = BM25        ：严格 top1 0.90 / top3 0.95 / 反例零漏；宽松 top1 0.81 / top3 0.95 / 反例漏 3
+
+    → 严格 top1 +4 点、宽松 top3 +5 点、**手动检索的噪声漏从 8 条降到 3 条**。
+    换完两类记忆共用同一条证据规则（≥2 词命中或命中 ASCII 标识符），比"两类两套打分器"
+    更好解释，也少一处标定（那条 0.10 的余弦门槛不再参与打分）。
+
+    `min_similarity` 参数现在**只当"严格模式"的标记用**（注入时非 None，手动检索时 None）；
+    它的数值已不再影响打分 —— 名字是历史遗留，改名成 `strict` 是后续的清理项。
+    """
+    if not entries:
+        return []
+    docs = [keyword_tokens(e.get("content", "")) for e in entries]
+    expanded = expand_aliases(query)
+    scores = _bm25_scores(docs, expanded)
+    query_terms = keyword_tokens(expanded)
+    strict = min_similarity is not None
     scored = []
-    for e in entries:
-        # 同样只在查询侧扩展：文档侧保持原样，避免改变已标定的余弦分布
-        sim = embedder.similarity(expand_aliases(query), e.get("content", ""))
-        if sim > min_similarity:
-            score = sim * _ranking_bonus(e, set())
-            scored.append((e, score))
-    scored.sort(key=lambda x: x[1], reverse=True)
+    for entry, tokens, score in zip(entries, docs, scores):
+        if score <= 0:
+            continue
+        matched = set(tokens) & query_terms
+        # 与程序性同一条规则：严格模式要"≥2 词命中或命中 ASCII 标识符"；
+        # 用户纠正那类规则仍走低门槛（命中 1 个词即可）。
+        entry_min = 1 if entry.get("context") == "user_correction" else (2 if strict else 1)
+        if not _match_is_evidence(matched, entry_min):
+            continue
+        scored.append((entry, score * _ranking_bonus(entry, matched)))
+    scored.sort(key=lambda x: -x[1])
     return [e for e, _ in scored[:top_k]]
 
 
