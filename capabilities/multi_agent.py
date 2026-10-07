@@ -13,6 +13,33 @@ import asyncio
 from core.tools.base import Tool
 
 
+MAX_PROJECT_RULES_CHARS = 2000
+
+_RULES_HEADER = "--- 项目约定（CLAUDE.md）---"
+
+
+def compose_subagent_prompt(role_prompt: str,
+                            project_rules: str | None = None) -> str:
+    """子 Agent 的系统提示词 = 角色提示词 + 项目约定（若有）。
+
+    为什么需要拼这一步：子 Agent 的上下文只有「角色提示词 + 任务描述」，父级的
+    系统提示词（含 CLAUDE.md、会话摘要、技能索引）**不会传下去**（新建 AgentLoop
+    时只给 profile["system_prompt"]）。这样一来，研究阶段定下的规范约束不到编码
+    阶段——两个角色都不知道项目约定。
+
+    为什么不用「给 research 配 Remember 工具、让 coding 去查」那条路：约定是**规则**，
+    每个角色都该遵守，应该主动注入；靠记忆库传递等于要求下游角色"碰巧想起来去查"，
+    而且会把项目规则散进三类记忆里，和 CLAUDE.md 形成两套真相来源。
+
+    截断是为了防止一份超长 CLAUDE.md 把每个子 Agent 的上下文都吃掉（上限定成
+    和会话摘要同一个量级）。
+    """
+    rules = (project_rules or "").strip()
+    if not rules:
+        return role_prompt
+    return f"{role_prompt}\n\n{_RULES_HEADER}\n{rules[:MAX_PROJECT_RULES_CHARS]}"
+
+
 class AgentTool(Tool):
     """Launch sub-agents to handle independent tasks.
 

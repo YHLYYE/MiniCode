@@ -199,6 +199,23 @@ def test_keyword_tokens_are_bilingual():
     assert not any(t in tokens for t in ("，", "_", "。"))
 
 
+def test_project_rules_is_empty_when_claude_md_is_missing(tmp_path):
+    """缺失时返回空串 —— 子 Agent 提示词拼装需要「没有就是没有」。
+
+    而 load_claude_md 缺失时返回的是一段「去创建 CLAUDE.md」的提示文案（那是给
+    主提示词用的）。两者混用，就会把占位说明当成项目约定灌给每一个子 Agent。
+    """
+    mm = MemoryManager(project_root=tmp_path)
+    assert mm.project_rules() == ""
+    assert "No CLAUDE.md" in mm.load_claude_md()      # 另一个接口的行为保持不变
+
+
+def test_project_rules_reads_the_file(tmp_path):
+    (tmp_path / "CLAUDE.md").write_text("禁止用 Tab 缩进", encoding="utf-8")
+    mm = MemoryManager(project_root=tmp_path)
+    assert mm.project_rules() == "禁止用 Tab 缩进"
+
+
 # ── 会话摘要（此前是死代码：定义了但没人调用） ──
 
 def test_session_summary_round_trip(tmp_path):

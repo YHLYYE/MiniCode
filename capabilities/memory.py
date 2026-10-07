@@ -519,6 +519,17 @@ class MemoryManager:
             )
         return self._claude_md_path.read_text(encoding="utf-8")
 
+    def project_rules(self) -> str:
+        """CLAUDE.md 的真实内容；文件不存在时返回空串。
+
+        与 load_claude_md 的区别：那个在主提示词里要给出"去创建 CLAUDE.md"的
+        提示文案，所以缺文件时会返回一段占位说明。子 Agent 的提示词拼装需要的
+        是**真实约定**，没有就该是空的，不该把占位说明当约定灌进去。
+        """
+        if not self._claude_md_path.exists():
+            return ""
+        return self._claude_md_path.read_text(encoding="utf-8")
+
     def load_session_summary(self) -> str:
         """上一次会话的规则式摘要（REPL 退出时写入），注入 System Prompt。"""
         if not self._session_summary_path.exists():

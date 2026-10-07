@@ -33,7 +33,7 @@ from core.tools.web import WebSearchTool, WebFetchTool
 from core.tools.base import SkillTool, RecallMemoryTool, RememberTool
 from capabilities.skill import SkillSystem
 from capabilities.memory import MemoryManager
-from capabilities.multi_agent import AgentTool
+from capabilities.multi_agent import AgentTool, compose_subagent_prompt
 from capabilities.compression import summarize_messages
 from capabilities.security import resolve_tools_for_mode, ExecutionMode
 from prompt.system_prompt import build_system_prompt
@@ -62,6 +62,12 @@ def _build_tools(mode: str, config: Config):
 
     def _agent_factory(tools, system_prompt, max_turns):
         """Spawn a sub-agent sharing the parent's model and memory store."""
+        # 子 Agent 拿不到父级的系统提示词（含 CLAUDE.md / 会话摘要 / 技能索引），
+        # 所以项目约定要在这里显式拼进角色提示词 —— 否则 research 定下的规范
+        # 约束不到 coding，两个角色都不知道项目约定。
+        system_prompt = compose_subagent_prompt(
+            system_prompt, memory_manager.project_rules()
+        )
         return AgentLoop(
             tools=tools,
             model_adapter=ModelAdapter(config.model),

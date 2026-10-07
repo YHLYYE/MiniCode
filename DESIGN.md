@@ -84,7 +84,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 212 个测试
+└── tests/                     # 217 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -1013,9 +1013,18 @@ class AgentTool(Tool):
 
 子 Agent 的 `run()` 和主 Agent 是同一个 `AgentLoop` 类，区别只在参数：
 - 独立的 `messages[]`（不共享主 Agent 历史）
-- 独立的 `system_prompt`
+- 独立的 `system_prompt`（**角色提示词 + 项目约定**，见下）
 - 独立的 `max_turns` 和 `context_budget`
 - 执行完毕后只返回结果摘要到主 Agent 上下文
+
+**为什么还要显式拼项目约定**：子 Agent 拿不到父级的系统提示词（那里的 CLAUDE.md /
+会话摘要 / 技能索引都不会传下去），于是「研究阶段定下的规范」约束不到「编码阶段」——
+两个角色都不知道项目约定。所以 `compose_subagent_prompt(角色提示词, CLAUDE.md)`
+把约定拼进每个角色的提示词（超长截断 2000 字）。
+
+不走「给 research 配 Remember、让 coding 自己去查」那条路：约定是**规则**，每个角色
+都该遵守，应该主动注入；靠记忆库传递等于要求下游角色碰巧想起来去查，还会把项目规则
+散进三类记忆里，和 CLAUDE.md 形成两套真相来源。
 
 ### 7.4 用量回流（否则预算是假的）
 

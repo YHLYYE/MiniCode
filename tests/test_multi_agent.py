@@ -3,7 +3,8 @@ import asyncio
 
 import pytest
 
-from capabilities.multi_agent import AgentTool
+from capabilities.multi_agent import (MAX_PROJECT_RULES_CHARS, AgentTool,
+                                      compose_subagent_prompt)
 from core.agent_loop import AgentLoop
 from core.state import DoneEvent, LoopState, TextDelta
 
@@ -271,3 +272,28 @@ async def test_missing_factory_degrades_without_raising():
     assert "not configured" in out
     assert "$0.0000" in out
     assert at.drain_usage() is None
+
+
+# ── 项目约定要显式拼进子 Agent 的角色提示词 ──
+# 回归背景：子 Agent 的上下文只有「角色提示词 + 任务」，父级的系统提示词
+# （含 CLAUDE.md）不会传下去 —— 于是 research 定下的规范约束不到 coding。
+
+def test_project_rules_are_appended_to_the_role_prompt():
+    prompt = compose_subagent_prompt("You are a research sub-agent.",
+                                     "禁止用 Tab 缩进；测试必须能离线跑。")
+    assert prompt.startswith("You are a research sub-agent.")
+    assert "禁止用 Tab 缩进" in prompt
+    assert "项目约定" in prompt          # 有分段标题，模型能看出哪部分是规范
+
+
+def test_no_project_rules_leaves_the_prompt_untouched():
+    """没有 CLAUDE.md 时不许拼一个空壳，更不许把占位文案当约定灌进去。"""
+    for empty in (None, "", "   \n  "):
+        assert compose_subagent_prompt("You are a coder.", empty) == "You are a coder."
+
+
+def test_project_rules_are_truncated():
+    """超长 CLAUDE.md 不能把每个子 Agent 的上下文都吃掉。"""
+    long_rules = "x" * (MAX_PROJECT_RULES_CHARS + 500)
+    prompt = compose_subagent_prompt("role", long_rules)
+    assert prompt.count("x") == MAX_PROJECT_RULES_CHARS
