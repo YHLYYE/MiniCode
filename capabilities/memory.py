@@ -318,6 +318,12 @@ def _merge_by_rank(ranked_lists: list[list], top_k: int) -> list:
     于是第 1 名之间恒为并列，最终由字典插入顺序决定 —— 等于又回到"按类型定优先级"。
     交错是它的显式版本：保证任一类型的第 1 名，排在任意类型的第 2 名之前。
 
+    **顺序为什么是「画像 → 程序性 → 情景」**：这是 A/B 测出来的，不是拍脑袋。
+    情景条目是任务日志（长、字符 n-gram 命中多），程序性条目是"可直接照做的经验/约定"。
+    情景排在前面时，第一位经常被一条日志占掉 —— 实测 top1 只有 0.48；
+    程序性优先之后 top1 升到 **0.86**（手动检索 0.10 → 0.81），而 top3 与反例零漏都不变。
+    直觉也对：问"这事怎么办"时，想要的是一条能照做的经验，不是一条"某次任务跑了 7 轮"的日志。
+
     前提：各列表已经过自己的门槛过滤（噪声不会以"第 1 名"的身份混进来）。
     另外这也修掉了早先"`画像 + 情景 + 程序性` 直接拼接"的老问题 —— 那时情景永远
     压过程序性（实测 top1 只有 0.27）。
@@ -569,9 +575,9 @@ class JSONMemoryStore(MemoryStore):
         # BM25 无界）。以前是三类直接拼接，等于情景永远压过程序性。
         strict = min_similarity is not None
         return _merge_by_rank([
-            self._search_profile(query),
-            self._search_episodic(query, top_k, min_similarity),
-            self._search_procedural(query, top_k, strict=strict),
+            self._search_profile(query),      # 画像：key 命中，最可靠，放最前
+            self._search_procedural(query, top_k, strict=strict),   # 程序性：可照做的经验
+            self._search_episodic(query, top_k, min_similarity),    # 情景：任务日志，最后
         ], top_k)
 
     def set_profile(self, key: str, value: str) -> None:
@@ -818,14 +824,14 @@ class SQLiteMemoryStore(MemoryStore):
         # 分数不可比（余弦有界 / BM25 无界），所以融合只比名次。
         strict = min_similarity is not None
         return _merge_by_rank([
-            self._search_profile(query),
-            [_dict_to_entry(e)
-             for e in _rank_episodic(self._load_type(MemoryType.EPISODIC),
-                                     query, top_k, self._embedder, floor)],
+            self._search_profile(query),          # 画像：key 命中，最可靠，放最前
             [_dict_to_entry(e)
              for e in _rank_procedural(self._load_type(MemoryType.PROCEDURAL),
                                        query, top_k,
-                                       min_matches=2 if strict else 1)],
+                                       min_matches=2 if strict else 1)],   # 程序性：可照做
+            [_dict_to_entry(e)
+             for e in _rank_episodic(self._load_type(MemoryType.EPISODIC),
+                                     query, top_k, self._embedder, floor)],  # 情景：日志
         ], top_k)
 
     def set_profile(self, key: str, value: str) -> None:

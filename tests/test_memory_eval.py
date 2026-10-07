@@ -18,14 +18,16 @@ from capabilities.memory import (MEMORY_INJECT_MIN_SIMILARITY,  # noqa: E402
 
 _CONTENT_BY_ID = {m["id"]: m["content"] for m in MEMORIES}
 # 及格线取实测值往下留一点余量，掉下来就该有人看。两组数字对应两种消费方：
-#   自动注入（严格）：top1 0.48 / top3 0.95，**反例零漏**（宁缺毋滥）
-#   手动检索（宽松）：top1 0.10 / top3 0.95，反例 8/8 会漏（宁可多给，模型自己筛）
+#   自动注入（严格）：top1 0.86 / top3 0.95，**反例零漏**（宁缺毋滥）
+#   手动检索（宽松）：top1 0.81 / top3 0.95，反例 8/8 会漏（宁可多给，模型自己筛）
 # 注入侧一路从 0.40/0.67 提到 0.48/0.95，靠四件事：融合从按名次 RRF 改成按名次交错、
 # "≥2 词命中"改成"≥2 词或命中 ASCII 标识符"、评测语料 12→24 条（IDF 才有区分度）、
-# 查询侧领域词典（中文问句 ↔ 英文标识符双向扩展）。
-# 注意 top1 偏低是刻意的取舍：查询扩展让更多条目命中（top3 涨），代价是第一位更挤。
-MIN_TOP3_STRICT, MIN_TOP1_STRICT = 0.90, 0.45
+# 查询侧领域词典（中文问句 ↔ 英文标识符双向扩展）、跨类型合并改成「画像 → 程序性 → 情景」。
+# top1 从 0.48 跳到 0.86 就是最后一件事的功劳：情景日志排在前面时，第一位经常被一条
+# 任务日志占掉；程序性（可照做的经验）优先之后，问"这事怎么办"才拿得到能照做的东西。
+MIN_TOP3_STRICT, MIN_TOP1_STRICT = 0.90, 0.80
 MIN_TOP3_LOOSE = 0.90
+MIN_TOP1_LOOSE = 0.75
 
 
 @pytest.mark.asyncio
@@ -63,14 +65,17 @@ async def test_manual_recall_trades_precision_for_recall(tmp_path):
         else:
             await mm.record_episodic(m["content"])
 
-    top3 = 0
+    top3 = top1 = 0
     for query, expected in CASES:
         hits = mm.search_sync(query, top_k=3)      # 不传 min_similarity → 宽松
         got = [h.content for h in hits]
-        top3 += bool(set(got) & {_CONTENT_BY_ID[i] for i in expected})
+        want = {_CONTENT_BY_ID[i] for i in expected}
+        top3 += bool(set(got) & want)
+        top1 += bool(got[:1] and got[0] in want)
     mm.close()
     n = len(CASES)
     assert top3 / n >= MIN_TOP3_LOOSE, f"宽松模式 top-3 掉到 {top3 / n:.2f}"
+    assert top1 / n >= MIN_TOP1_LOOSE, f"宽松模式 top-1 掉到 {top1 / n:.2f}"
 
 
 @pytest.mark.asyncio
