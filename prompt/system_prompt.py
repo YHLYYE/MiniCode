@@ -5,7 +5,8 @@ from pathlib import Path
 
 
 def build_system_prompt(skill_index: str = "", claude_md: str = "",
-                        session_summary: str = "", routing_hint: str = "") -> str:
+                        session_summary: str = "", routing_hint: str = "",
+                        memory_hint: str = "") -> str:
     """Build the system prompt with static and dynamic sections.
 
     The static section contains identity, safety rules, and core loop
@@ -69,6 +70,11 @@ When the task is complete, provide a final answer without calling tools.
         dynamic_parts.append(
             f"## Previous Session\n{session_summary}"
         )
+
+    # 自动召回的历史记忆（每轮 top-k）。放在路由块**之前** —— 路由块必须保持
+    # 动态段的最后一段，理由见上面 docstring（它是最细粒度、最"本次"的内容）。
+    if memory_hint:
+        dynamic_parts.append(memory_hint)
 
     # Per-task routing hint — MUST stay last (see docstring).
     if routing_hint:

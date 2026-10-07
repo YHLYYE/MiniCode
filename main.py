@@ -32,7 +32,8 @@ from core.tools.search import GrepTool, GlobTool
 from core.tools.web import WebSearchTool, WebFetchTool
 from core.tools.base import SkillTool, RecallMemoryTool, RememberTool
 from capabilities.skill import SkillSystem
-from capabilities.memory import MemoryManager
+from capabilities.memory import (MEMORY_HINT_TOP_K, MEMORY_INJECT_MIN_SIMILARITY,
+                                 MemoryManager, format_memory_hint)
 from capabilities.multi_agent import AgentTool, compose_subagent_prompt
 from capabilities.compression import summarize_messages
 from capabilities.security import resolve_tools_for_mode, ExecutionMode
@@ -44,7 +45,7 @@ from session_store import SessionStore
 PACKAGE_ROOT = Path(__file__).resolve().parent
 
 
-def _build_tools(mode: str, config: Config):
+def _build_tools(mode: str, config: Config, inject_memory: bool = True):
     """Initialize subsystems.
 
     Returns (tools, system_prompt, exec_mode, memory_manager,
@@ -101,11 +102,25 @@ def _build_tools(mode: str, config: Config):
     tools = resolve_tools_for_mode(all_tools, exec_mode)
 
     def system_prompt_for(task: str) -> str:
+        # 每轮自动召回一次历史记忆，拼进动态段（放在路由块之前）。
+        # 用同步检索：提示词组装是同步函数，而 search() 是 async；底层 store
+        # 本来就是同步的，所以走 search_sync 就行，不必把工厂改成异步。
+        memory_hint = ""
+        if inject_memory and task.strip():
+            memory_hint = format_memory_hint(
+                memory_manager.search_sync(
+                    task, top_k=MEMORY_HINT_TOP_K,
+                    # 注入用更严的相关性下限：手动查询宁可多给（0.01），
+                    # 但每轮注入的要求是"别吵"，否则无关任务也会带进旧经验。
+                    min_similarity=MEMORY_INJECT_MIN_SIMILARITY,
+                )
+            )
         return build_system_prompt(
             skill_index=skill_system.get_index_for_system_prompt(),
             claude_md=memory_manager.load_claude_md(),
             session_summary=memory_manager.load_session_summary(),
             routing_hint=skill_system.routing_hint(task, top_k=3),
+            memory_hint=memory_hint,
         )
 
     system_prompt = system_prompt_for("")
@@ -120,8 +135,10 @@ def _build_tools(mode: str, config: Config):
 @click.option("--max-cost", default=5.0, help="Maximum USD cost per session")
 @click.option("--resume", default=None, help="Resume a previous session by id")
 @click.option("--list-sessions", is_flag=True, help="List saved sessions and exit")
+@click.option("--no-memory-inject", is_flag=True,
+              help="不把历史记忆自动注入系统提示词（记忆仍可手动 RecallMemory）")
 def main(task: str | None, mode: str, max_turns: int, max_cost: float,
-         resume: str | None, list_sessions: bool):
+         resume: str | None, list_sessions: bool, no_memory_inject: bool):
     """MiniCode — AI Coding Agent
 
     TASK: (可选) 单次任务。不传则进入交互式 REPL。
@@ -144,7 +161,8 @@ def main(task: str | None, mode: str, max_turns: int, max_cost: float,
         return
 
     (tools, system_prompt, exec_mode, memory_manager,
-     system_prompt_factory) = _build_tools(mode, config)
+    system_prompt_factory) = _build_tools(
+        mode, config, inject_memory=not no_memory_inject)
 
     # --resume: 加载历史会话
     resume_state = None

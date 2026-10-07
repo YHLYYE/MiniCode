@@ -2,7 +2,8 @@
 import pytest
 import asyncio
 from capabilities.memory import (
-    MemoryManager, MemoryType, MemoryEntry, JSONMemoryStore, SQLiteMemoryStore,
+    MAX_CLAUDE_MD_LINES, MemoryManager, MemoryType, MemoryEntry,
+    JSONMemoryStore, SQLiteMemoryStore, format_memory_hint,
 )
 
 
@@ -271,3 +272,127 @@ def test_claude_md_fallback_promises_nothing_it_cannot_do(tmp_path):
 def test_update_claude_md_is_gone():
     """未被任何人调用的写入口已删除，避免文档宣称一个不存在的能力。"""
     assert not hasattr(MemoryManager, "update_claude_md")
+
+
+# ── CLAUDE.md 的加载预算（参考 Claude Code：MEMORY.md 前 200 行 / 25KB）──
+
+def test_claude_md_is_truncated_to_budget(tmp_path):
+    """主提示词里的 CLAUDE.md 必须有上限 —— 它每轮都进系统提示词。"""
+    big = "\n".join(f"约定第 {i} 条" for i in range(MAX_CLAUDE_MD_LINES + 50))
+    (tmp_path / "CLAUDE.md").write_text(big, encoding="utf-8")
+    mm = MemoryManager(project_root=tmp_path)
+
+    got = mm.load_claude_md()
+    assert len(got.splitlines()) <= MAX_CLAUDE_MD_LINES + 1   # 多出来那行是截断标注
+    assert "已截断" in got
+    assert "约定第 0 条" in got
+    assert f"约定第 {MAX_CLAUDE_MD_LINES + 49} 条" not in got
+    mm.close()
+
+
+def test_claude_md_under_budget_is_untouched(tmp_path):
+    text = "禁止用 Tab 缩进\n测试必须能离线跑"
+    (tmp_path / "CLAUDE.md").write_text(text, encoding="utf-8")
+    mm = MemoryManager(project_root=tmp_path)
+    assert mm.load_claude_md() == text        # 没超预算不加任何标注
+    assert mm.project_rules() == text         # 子 Agent 那条路不受影响
+    mm.close()
+
+
+# ── 记忆注入的格式、预算与同步检索 ──
+
+def _entry(content: str, kind: str = "procedural") -> MemoryEntry:
+    return MemoryEntry.make(MemoryType(kind), content)
+
+
+def test_memory_hint_is_empty_without_entries():
+    assert format_memory_hint([]) == ""
+
+
+def test_memory_hint_labels_type_and_warns_it_is_advisory():
+    hint = format_memory_hint([
+        _entry("报错 No module named docx 时先装依赖", "procedural"),
+        _entry("Task: 重构 auth | 7 turns", "episodic"),
+    ])
+    assert "仅供参考" in hint                     # 记忆可能过时/错配，不能当事实
+    assert "[经验]" in hint and "[事件]" in hint
+    assert "No module named docx" in hint
+
+
+def test_memory_hint_respects_top_k_and_char_budget():
+    entries = [_entry("x" * 300) for _ in range(10)]
+    hint = format_memory_hint(entries, top_k=3, max_chars=400)
+    bullets = [ln for ln in hint.splitlines() if ln.startswith("- ")]
+    assert 1 <= len(bullets) <= 3
+    assert len(hint) <= 400 + 120             # 标题不计入，条目必须守着预算
+
+
+@pytest.mark.asyncio
+async def test_search_sync_matches_search(tmp_path):
+    """同步版是给提示词组装用的，结果必须和异步版一致。"""
+    mm = MemoryManager(project_root=tmp_path)
+    await mm.record_procedural("重建索引再跑测试")
+    mm.close()
+
+    mm2 = MemoryManager(project_root=tmp_path)
+    async_hits = await mm2.search("重建索引", top_k=3)
+    sync_hits = mm2.search_sync("重建索引", top_k=3)
+    assert [e.content for e in async_hits] == [e.content for e in sync_hits]
+    mm2.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["sqlite", "json"])
+async def test_empty_query_does_not_return_every_profile(tmp_path, backend):
+    """空查询不能命中全部偏好 —— 任务为空时的提示词组装会把它整段灌进上下文。"""
+    store = (None if backend == "sqlite"
+             else JSONMemoryStore(tmp_path / "json_memories"))
+    mm = MemoryManager(project_root=tmp_path, store=store)
+    await mm.record_user_profile("naming_style", "snake_case")
+    await mm.record_user_profile("prefer", "先跑测试再提交")
+
+    assert await mm.search("", top_k=5) == []
+    assert mm.search_sync("   ") == []
+    mm.close()
+
+
+# ── 注入场景的相关性下限（标定数据固化在这里）──
+
+def test_ngram_similarity_separates_relevant_from_irrelevant():
+    """0.15 这个门槛不是拍的 —— 用真实数据把它钉住。
+
+    标定用的是记忆系统自己的 n-gram 余弦：同一条记忆上，
+    相关查询 0.21 / 0.40，无关查询 -0.004 / 0.039 / 0.048。
+    任何一边漂到门槛另一侧，这条测试就会红。
+    """
+    from capabilities.memory import (MEMORY_INJECT_MIN_SIMILARITY,
+                                     NGramEmbeddingFunction)
+
+    emb = NGramEmbeddingFunction()
+    entry = "Task: 修 docx 依赖 | 5 turns"
+    relevant = [emb.similarity(q, entry) for q in
+                ("又报 No module named docx 了，怎么办", "docx 依赖装不上")]
+    irrelevant = [emb.similarity(q, entry) for q in
+                  ("把 README 的标题改成中文", "帮我把这个函数重构一下", "今天天气怎么样")]
+
+    assert min(relevant) > MEMORY_INJECT_MIN_SIMILARITY, (relevant, irrelevant)
+    assert max(irrelevant) < MEMORY_INJECT_MIN_SIMILARITY, (relevant, irrelevant)
+
+
+@pytest.mark.asyncio
+async def test_inject_floor_keeps_irrelevant_tasks_clean(tmp_path):
+    """注入用的严格下限：无关任务不该被塞进旧经验，相关任务仍要带出来。"""
+    from capabilities.memory import MEMORY_INJECT_MIN_SIMILARITY
+
+    mm = MemoryManager(project_root=tmp_path)
+    await mm.record_episodic("Task: 修 docx 依赖 | 5 turns")
+    await mm.record_procedural("No module named docx → 先装 python-docx 再重跑")
+
+    def hint(task: str) -> str:
+        return format_memory_hint(mm.search_sync(
+            task, top_k=3, min_similarity=MEMORY_INJECT_MIN_SIMILARITY))
+
+    assert hint("又报 No module named docx 了，怎么办"), "相关任务应该带上经验"
+    assert hint("把 README 的标题改成中文") == "", "无关任务不该带旧经验"
+    # 手动查询走宽松门槛：同样的无关任务仍可能给出一条（宁可多给，模型自己筛）
+    mm.close()

@@ -179,14 +179,79 @@ def _rank_procedural(entries: list[dict], query: str, top_k: int) -> list[dict]:
 
 _MIN_SIMILARITY = 0.01  # substring-level overlap floor for episodic search
 
+# 注入场景要"别吵"，手动查询要"别漏" —— 所以两个门槛分开。
+# 标定（见 tests/test_memory.py 里固化的数据）：docx 那条记忆上
+#   相关查询 0.21 / 0.40，无关查询 -0.004 / 0.039 / 0.048（情景）
+# 取 0.15 能干净分开。手动查询仍用 _MIN_SIMILARITY=0.01（宁可多给，模型自己筛）。
+MEMORY_INJECT_MIN_SIMILARITY = 0.15
+
+# 主提示词里 CLAUDE.md 的预算。参考 Claude Code 的 auto memory 加载策略
+# （MEMORY.md 前 200 行或前 25KB，先到为准），这里压得更紧：
+# 它每轮都进系统提示词，不设上限就是拿 token 换噪声。
+MAX_CLAUDE_MD_LINES = 200
+MAX_CLAUDE_MD_CHARS = 8000
+
+# 记忆注入的预算：最多几条、总共多少字符。
+MEMORY_HINT_TOP_K = 3
+MEMORY_HINT_MAX_CHARS = 600
+
+_TYPE_LABELS = {
+    "procedural": "经验",
+    "episodic": "事件",
+    "user_profile": "偏好",
+}
+
+
+def _truncate_claude_md(text: str) -> str:
+    """按行数/字符双上限截断 CLAUDE.md，并明确标注被截断过。"""
+    lines = text.splitlines()
+    truncated = False
+    if len(lines) > MAX_CLAUDE_MD_LINES:
+        lines = lines[:MAX_CLAUDE_MD_LINES]
+        truncated = True
+    out = "\n".join(lines)
+    if len(out) > MAX_CLAUDE_MD_CHARS:
+        out = out[:MAX_CLAUDE_MD_CHARS]
+        truncated = True
+    if truncated:
+        out += "\n[... 已截断：CLAUDE.md 超出预算，完整内容见文件]"
+    return out
+
+
+def format_memory_hint(entries: list, top_k: int = MEMORY_HINT_TOP_K,
+                       max_chars: int = MEMORY_HINT_MAX_CHARS) -> str:
+    """把召回到的记忆拼成系统提示词里的一小段。
+
+    两个约束都不是洁癖：① 这段**每轮都进上下文**，超预算就是拿 token 换噪声；
+    ② 记忆可能过时或错配，所以措辞上写明"仅供参考，不符请忽略"，
+    避免模型把旧经验当成事实照搬。
+    """
+    if not entries:
+        return ""
+    header = "## 可能相关的历史记忆（仅供参考，若与当前任务不符请忽略）"
+    lines = [header]
+    used = len(header)
+    for entry in entries[:top_k]:
+        content = (getattr(entry, "content", "") or "").strip().replace("\n", " ")[:200]
+        if not content:
+            continue
+        label = _TYPE_LABELS.get(getattr(entry, "type", ""), getattr(entry, "type", ""))
+        line = f"- [{label}] {content}"
+        if used + len(line) > max_chars:
+            break
+        lines.append(line)
+        used += len(line)
+    return "\n".join(lines) if len(lines) > 1 else ""
+
 
 def _rank_episodic(entries: list[dict], query: str, top_k: int,
-                   embedder: "NGramEmbeddingFunction") -> list[dict]:
+                   embedder: "NGramEmbeddingFunction",
+                   min_similarity: float = _MIN_SIMILARITY) -> list[dict]:
     """n-gram cosine ranking for episodic memory (shared by backends)."""
     scored = []
     for e in entries:
         sim = embedder.similarity(query, e.get("content", ""))
-        if sim > _MIN_SIMILARITY:
+        if sim > min_similarity:
             score = sim * (1.0 if e.get("success", True) else 0.5)
             scored.append((e, score))
     scored.sort(key=lambda x: x[1], reverse=True)
@@ -246,16 +311,16 @@ class JSONMemoryStore(MemoryStore):
         self._store_json_list(path, _entry_to_dict(entry))
 
     def search(self, memory_type: MemoryType | None, query: str,
-               top_k: int) -> list[MemoryEntry]:
+               top_k: int, min_similarity: float | None = None) -> list[MemoryEntry]:
         if memory_type == MemoryType.USER_PROFILE:
             return self._search_profile(query)
         if memory_type == MemoryType.PROCEDURAL:
             return self._search_procedural(query, top_k)
         if memory_type == MemoryType.EPISODIC:
-            return self._search_episodic(query, top_k)
+            return self._search_episodic(query, top_k, min_similarity)
         # 无类型过滤 → 三类都搜，并**统一截断到 top_k**（与 SQLiteMemoryStore 保持一致）
         results = self._search_profile(query)
-        results += self._search_episodic(query, top_k)
+        results += self._search_episodic(query, top_k, min_similarity)
         results += self._search_procedural(query, top_k)
         return results[:top_k]
 
@@ -301,12 +366,15 @@ class JSONMemoryStore(MemoryStore):
         return [_dict_to_entry(e)
                 for e in _rank_procedural(entries, query, top_k)]
 
-    def _search_episodic(self, query: str, top_k: int) -> list[MemoryEntry]:
+    def _search_episodic(self, query: str, top_k: int,
+                         min_similarity: float | None = None) -> list[MemoryEntry]:
         entries = self._load_json_list(self._episodic_path)
         if not entries:
             return []
         return [_dict_to_entry(e)
-                for e in _rank_episodic(entries, query, top_k, self._embedder)]
+                for e in _rank_episodic(
+                    entries, query, top_k, self._embedder,
+                    _MIN_SIMILARITY if min_similarity is None else min_similarity)]
 
     def _search_profile(self, query: str) -> list[MemoryEntry]:
         if not self._profile_path.exists():
@@ -317,6 +385,10 @@ class JSONMemoryStore(MemoryStore):
             return []
 
         q = _normalize_key(query)
+        # 空查询不能命中全部画像：`q in key` 在 q 为空串时恒为真 —— 那会让
+        # "任务为空时的提示词组装"把所有偏好一次性灌进上下文。
+        if not q:
+            return []
         results = []
         for key, value in profile.items():
             if _normalize_key(key) in q or q in _normalize_key(key):
@@ -406,7 +478,8 @@ class SQLiteMemoryStore(MemoryStore):
             self._conn.commit()
 
     def search(self, memory_type: MemoryType | None, query: str,
-               top_k: int) -> list[MemoryEntry]:
+               top_k: int, min_similarity: float | None = None) -> list[MemoryEntry]:
+        floor = _MIN_SIMILARITY if min_similarity is None else min_similarity
         if memory_type == MemoryType.USER_PROFILE:
             return self._search_profile(query)
         if memory_type == MemoryType.PROCEDURAL:
@@ -416,7 +489,8 @@ class SQLiteMemoryStore(MemoryStore):
         if memory_type == MemoryType.EPISODIC:
             entries = self._load_type(MemoryType.EPISODIC)
             return [_dict_to_entry(e)
-                    for e in _rank_episodic(entries, query, top_k, self._embedder)]
+                    for e in _rank_episodic(entries, query, top_k, self._embedder,
+                                            floor)]
         # 无类型过滤 → 三类都搜，并统一截断到 top_k。这里原先有两个坑：
         #   ① 把用户画像排除在外，于是 RecallMemory 永远拿不到用户偏好
         #      （可它的描述里承诺了 "project conventions"）；
@@ -425,7 +499,7 @@ class SQLiteMemoryStore(MemoryStore):
         results = self._search_profile(query)
         results += [_dict_to_entry(e)
                     for e in _rank_episodic(self._load_type(MemoryType.EPISODIC),
-                                            query, top_k, self._embedder)]
+                                            query, top_k, self._embedder, floor)]
         results += [_dict_to_entry(e)
                     for e in _rank_procedural(self._load_type(MemoryType.PROCEDURAL),
                                               query, top_k)]
@@ -474,6 +548,8 @@ class SQLiteMemoryStore(MemoryStore):
     def _search_profile(self, query: str) -> list[MemoryEntry]:
         profile = self._load_profile()
         q = _normalize_key(query)
+        if not q:      # 同上：空查询不该命中全部偏好
+            return []
         results = []
         for key, value in profile.items():
             if _normalize_key(key) in q or q in _normalize_key(key):
@@ -519,13 +595,18 @@ class MemoryManager:
     # ── Session-level context ──
 
     def load_claude_md(self) -> str:
+        """项目约定文本（进主提示词）。
+
+        缺文件时给"去创建"的提示文案；存在时**按预算截断** —— 这份内容每轮都进
+        系统提示词，越写越长就是在每轮烧 token。
+        """
         if not self._claude_md_path.exists():
             return (
                 "[No CLAUDE.md found. Create one at the project root to store "
                 "coding conventions and project context; whatever it contains "
                 "is injected into this prompt.]"
             )
-        return self._claude_md_path.read_text(encoding="utf-8")
+        return _truncate_claude_md(self._claude_md_path.read_text(encoding="utf-8"))
 
     def project_rules(self) -> str:
         """CLAUDE.md 的真实内容；文件不存在时返回空串。
@@ -595,10 +676,22 @@ class MemoryManager:
     # ── Search ──
 
     async def search(self, query: str, top_k: int = 5,
-                     memory_type: MemoryType | None = None) -> list[MemoryEntry]:
+                     memory_type: MemoryType | None = None,
+                     min_similarity: float | None = None) -> list[MemoryEntry]:
         return await asyncio.to_thread(
-            self._store.search, memory_type, query, top_k
+            self._store.search, memory_type, query, top_k, min_similarity
         )
+
+    def search_sync(self, query: str, top_k: int = 5,
+                    memory_type: MemoryType | None = None,
+                    min_similarity: float | None = None) -> list[MemoryEntry]:
+        """同步版检索 —— 给"同步的提示词组装"用。
+
+        为什么要有它：`search()` 是 async（内部套了 asyncio.to_thread），而系统提示词的
+        组装（main.py 的 system_prompt_for）是同步函数。底层 store.search 本来就是同步的，
+        所以这里直接调它 —— 不必为了注入记忆把整条提示词工厂改成异步。
+        """
+        return self._store.search(memory_type, query, top_k, min_similarity)
 
     def close(self) -> None:
         """Release the underlying store's resources (e.g. SQLite connection)."""

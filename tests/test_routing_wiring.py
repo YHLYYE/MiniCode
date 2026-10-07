@@ -200,3 +200,32 @@ def test_with_system_prompt_prepends_when_missing():
     state = LoopState(messages=(Message(role="user", content="hi"),))
     out = _with_system_prompt(state, "SYS")
     assert [m.role for m in out.messages] == ["system", "user"]
+
+
+# ── 记忆注入在动态段里的位置 ──
+# 回归背景：闭环的"读"这一端原来是断的 —— build_system_prompt 根本没有记忆参数，
+# 记忆只能靠模型主动调 RecallMemory。现在每轮自动召回 top-k 拼进动态段。
+
+def test_memory_hint_sits_in_dynamic_section_before_the_routing_block():
+    """记忆块必须在动态段里，且**在路由块之前**。
+
+    路由块必须保持动态段的最后一段（它是最细粒度、最"本次"的内容，
+    前缀缓存的失效范围从它开始）——所以新增的记忆块只能插在它前面。
+    """
+    prompt = build_system_prompt(
+        claude_md="project conventions",
+        routing_hint="## Task Routing\n- code-review (1.00)",
+        memory_hint="## 可能相关的历史记忆（仅供参考）\n- [经验] 重建索引再跑测试",
+    )
+    dynamic = prompt.split(SEP)[1]
+    assert "## 可能相关的历史记忆" in dynamic
+    assert dynamic.rstrip().endswith('name="<skill-name>".') or \
+        dynamic.rstrip().endswith("- code-review (1.00)")
+    # 记忆块出现在路由块之前
+    assert dynamic.index("历史记忆") < dynamic.index("Task Routing")
+
+
+def test_no_memory_hint_leaves_prompt_unchanged():
+    """没有召回到记忆时，不许在提示词里留下空标题。"""
+    prompt = build_system_prompt(claude_md="rules")
+    assert "历史记忆" not in prompt
