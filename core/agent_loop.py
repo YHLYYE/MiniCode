@@ -580,7 +580,14 @@ class AgentLoop:
             f"{self._state.total_tokens} tokens{suffix}",
             tags=["task_summary"],
         )
+        # 先取一次"本轮有没有出错"：下面的提炼会把 _task_errors 清空，
+        # 结算 adoption 需要的是**结算前**的事实。
+        had_errors = bool(self._task_errors)
         await self._distill_fix()
+        outcome = getattr(self._memory, "record_task_outcome", None)
+        if callable(outcome):
+            # 注入过的记忆按本轮结局记 +1 / −1（可观测代理，见 MemoryManager）
+            outcome(success=not had_errors)
 
     def _note_possible_fix(self, tool_name: str, file_path: str, result: str) -> None:
         """记下"出错之后第一次成功的编辑"——它是提炼经验的修法证据。

@@ -107,14 +107,16 @@ def _build_tools(mode: str, config: Config, inject_memory: bool = True):
         # 本来就是同步的，所以走 search_sync 就行，不必把工厂改成异步。
         memory_hint = ""
         if inject_memory and task.strip():
-            memory_hint = format_memory_hint(
-                memory_manager.search_sync(
-                    task, top_k=MEMORY_HINT_TOP_K,
-                    # 注入用更严的相关性下限：手动查询宁可多给（0.01），
-                    # 但每轮注入的要求是"别吵"，否则无关任务也会带进旧经验。
-                    min_similarity=MEMORY_INJECT_MIN_SIMILARITY,
-                )
+            hits = memory_manager.search_sync(
+                task, top_k=MEMORY_HINT_TOP_K,
+                # 注入用更严的相关性下限：手动查询宁可多给（0.01），
+                # 但自动注入的要求是"别吵"，否则无关任务也会带进旧经验。
+                min_similarity=MEMORY_INJECT_MIN_SIMILARITY,
             )
+            memory_hint = format_memory_hint(hits)
+            # 记一次注入（retrieval_count +1，并记住这批 id）；
+            # 任务结束时循环会调 record_task_outcome 结算 adoption。
+            memory_manager.record_injection(hits)
         return build_system_prompt(
             skill_index=skill_system.get_index_for_system_prompt(),
             claude_md=memory_manager.load_claude_md(),

@@ -437,3 +437,68 @@ async def test_memory_records_file_edit(tmp_path):
     results = await mm.search("memtest_unique_xyz",
                               memory_type=MemoryType.EPISODIC)
     assert any("Edited" in e.content for e in results), [e.content for e in results]
+
+
+# ── 自沉淀的"提炼"这一环：错误 → 修法配对 ──
+# 回归背景：简历上写着"错误→修法自动提炼"，但这条能力此前**没有任何测试**。
+
+class _BoomTool(Tool):
+    name = "Boom"
+    input_schema = {"x": {"type": "integer"}}
+
+    async def execute(self, x: int = 0) -> str:
+        raise RuntimeError("boom: 故意的")
+
+
+class _WriteStub(Tool):
+    name = "Write"
+    input_schema = {"file_path": {"type": "string"},
+                    "content": {"type": "string"}}
+    is_readonly = False
+
+    async def execute(self, file_path: str, content: str = "") -> str:
+        return f"Updated {file_path}"
+
+
+@pytest.mark.asyncio
+async def test_distills_error_and_fix_into_procedural_memory(tmp_path):
+    """先报错、再成功改文件 → 应该提炼出一条「错误 → 修法」的程序性记忆。
+
+    这是零模型调用的：错误列表和成功的编辑本来就在循环里。
+    """
+    mock = MockModelAdapter([
+        [make_tool_use("Boom", {"x": 1}), make_stop("end_turn")],
+        [make_tool_use("Write", {"file_path": "demo.py", "content": "print(1)"}),
+         make_stop("end_turn")],
+        [make_text("修好了"), make_stop("end_turn")],
+    ])
+    mm = MemoryManager(project_root=tmp_path)
+    loop = AgentLoop(tools=[_BoomTool(), _WriteStub()], model_adapter=mock,
+                     system_prompt="Test.", memory_manager=mm)
+    async for _ in loop.run("让工具炸一次再修好"):
+        pass
+
+    hits = await mm.search("boom", memory_type=MemoryType.PROCEDURAL)
+    assert hits, "没有提炼出任何程序性记忆"
+    text = hits[0].content
+    assert "→ 修法：" in text, text
+    assert "demo.py" in text, text
+    mm.close()
+
+
+@pytest.mark.asyncio
+async def test_no_distillation_without_a_successful_fix(tmp_path):
+    """只报错、没修好 → 不许写经验（否则记忆里全是噪声）。"""
+    mock = MockModelAdapter([
+        [make_tool_use("Boom", {"x": 1}), make_stop("end_turn")],
+        [make_text("算了"), make_stop("end_turn")],
+    ])
+    mm = MemoryManager(project_root=tmp_path)
+    loop = AgentLoop(tools=[_BoomTool()], model_adapter=mock,
+                     system_prompt="Test.", memory_manager=mm)
+    async for _ in loop.run("炸一次就算了"):
+        pass
+
+    hits = await mm.search("boom", memory_type=MemoryType.PROCEDURAL)
+    assert hits == [], f"没修好却写了经验：{[h.content for h in hits]}"
+    mm.close()

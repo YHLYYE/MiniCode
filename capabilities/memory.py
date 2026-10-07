@@ -129,6 +129,12 @@ class MemoryEntry:
     # 同一条经验被重复写入的次数。写入侧按内容指纹去重：重复不是新增条目，
     # 而是把这一条的时间戳推新、计数 +1（"最近又用到"的经验不该被裁剪掉）。
     hit_count: int = 1
+    # 三个正交计数器（hit_count 已存在，这里补另外两个）：
+    #   retrieval_count —— 被检索命中几次（含自动注入）
+    #   adoption_count  —— 命中之后"有没有帮上忙"：本轮没有工具错误且正常完成 +1，
+    #                      出现工具错误 −1。用可观测代理代替"我觉得有用"。
+    retrieval_count: int = 0
+    adoption_count: int = 0
 
     @classmethod
     def make(cls, memory_type: MemoryType, content: str, **kwargs) -> "MemoryEntry":
@@ -151,6 +157,8 @@ def _entry_to_dict(entry: MemoryEntry) -> dict:
         "file_paths": entry.file_paths, "tags": entry.tags,
         "timestamp": entry.timestamp, "success": entry.success,
         "hit_count": entry.hit_count,
+        "retrieval_count": entry.retrieval_count,
+        "adoption_count": entry.adoption_count,
     }
 
 
@@ -167,6 +175,8 @@ def _dict_to_entry(d: dict) -> MemoryEntry:
         timestamp=d.get("timestamp", 0.0), success=d.get("success", True),
         type=memory_type.value,
         hit_count=int(d.get("hit_count", 1) or 1),
+        retrieval_count=int(d.get("retrieval_count", 0) or 0),
+        adoption_count=int(d.get("adoption_count", 0) or 0),
     )
 
 
@@ -377,6 +387,14 @@ class MemoryStore(ABC):
     def set_profile(self, key: str, value: str) -> None:
         """Set a user profile key-value pair."""
 
+    @abstractmethod
+    def bump(self, ids: list[str], field: str, delta: int = 1) -> int:
+        """给一批条目累加某个计数器，返回受影响条数。
+
+        单独开一个接口而不是"读出来改再写回去"：SQLite 侧一条 UPDATE 就够，
+        JSON 侧也只需要改对应列表，避免整库重写。
+        """
+
 
 class JSONMemoryStore(MemoryStore):
     """Default backend — zero-dependency JSON files + n-gram vector search.
@@ -455,6 +473,24 @@ class JSONMemoryStore(MemoryStore):
         profile[key] = value
         self._profile_path.write_text(
             json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def bump(self, ids: list[str], field: str, delta: int = 1) -> int:
+        if field not in ("hit_count", "retrieval_count", "adoption_count"):
+            raise ValueError(f"未知计数器：{field}")
+        wanted, changed = set(ids), 0
+        if not wanted:
+            return 0
+        for path in (self._procedural_path, self._episodic_path):
+            entries = self._load_json_list(path)
+            touched = False
+            for e in entries:
+                if e.get("id") in wanted:
+                    e[field] = int(e.get(field, 0) or 0) + delta
+                    changed += 1
+                    touched = True
+            if touched:
+                self._write_json_list(path, entries)
+        return changed
 
     # ── Internal storage helpers ──
 
@@ -563,7 +599,9 @@ class SQLiteMemoryStore(MemoryStore):
                     timestamp REAL DEFAULT 0,
                     success INTEGER DEFAULT 1,
                     fingerprint TEXT DEFAULT '',
-                    hit_count INTEGER DEFAULT 1
+                    hit_count INTEGER DEFAULT 1,
+                    retrieval_count INTEGER DEFAULT 0,
+                    adoption_count INTEGER DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS idx_memories_type
                     ON memories(memory_type);
@@ -586,7 +624,9 @@ class SQLiteMemoryStore(MemoryStore):
         """
         cols = {row[1] for row in self._conn.execute("PRAGMA table_info(memories)")}
         for name, ddl in (("fingerprint", "TEXT DEFAULT ''"),
-                          ("hit_count", "INTEGER DEFAULT 1")):
+                          ("hit_count", "INTEGER DEFAULT 1"),
+                          ("retrieval_count", "INTEGER DEFAULT 0"),
+                          ("adoption_count", "INTEGER DEFAULT 0")):
             if name not in cols:
                 self._conn.execute(f"ALTER TABLE memories ADD COLUMN {name} {ddl}")
         rows = self._conn.execute(
@@ -685,13 +725,29 @@ class SQLiteMemoryStore(MemoryStore):
             )
             self._conn.commit()
 
+    def bump(self, ids: list[str], field: str, delta: int = 1) -> int:
+        if field not in ("hit_count", "retrieval_count", "adoption_count"):
+            raise ValueError(f"未知计数器：{field}")
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        with self._lock:
+            cur = self._conn.execute(
+                f"UPDATE memories SET {field} = COALESCE({field}, 0) + ? "
+                f"WHERE id IN ({placeholders})",
+                (delta, *ids),
+            )
+            self._conn.commit()
+            return cur.rowcount
+
     # ── Internal helpers ──
 
     def _load_type(self, memory_type: MemoryType) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT id, memory_type, content, context, file_paths, "
-                "tags, timestamp, success, hit_count FROM memories "
+                "tags, timestamp, success, hit_count, retrieval_count, "
+                "adoption_count FROM memories "
                 "WHERE memory_type = ? ORDER BY timestamp DESC",
                 (memory_type.value,),
             ).fetchall()
@@ -706,6 +762,8 @@ class SQLiteMemoryStore(MemoryStore):
                 "timestamp": r[6],
                 "success": bool(r[7]),
                 "hit_count": r[8] if len(r) > 8 else 1,
+                "retrieval_count": r[9] if len(r) > 9 else 0,
+                "adoption_count": r[10] if len(r) > 10 else 0,
             }
             for r in rows
         ]
@@ -763,6 +821,36 @@ class MemoryManager:
         self._store = store or SQLiteMemoryStore(
             self._root / ".minicode" / "memories.sqlite"
         )
+        # 上一次注入的记忆 id —— 任务结束时用它结算"有没有帮上忙"（adoption）。
+        # 注入发生在提示词组装里（同步），结算发生在循环收尾（异步），两者之间
+        # 用一个批次句柄传递，避免把记忆 id 塞进 LoopState 的每个字段。
+        self._last_injected: list[str] = []
+
+    # ── 注入与结算（三个计数器的写入端）──
+
+    def record_injection(self, entries: list[MemoryEntry]) -> int:
+        """记一次注入：命中条目的 retrieval_count +1，并记住这批 id。
+
+        与 hit_count 的区别：hit_count 记的是"被写进来几次"（去重用），
+        retrieval_count 记的是"被检索命中几次"——只有后者能回答"这条经验有没有被用上"。
+        """
+        ids = [e.id for e in entries if getattr(e, "id", "")]
+        if not ids:
+            return 0
+        self._last_injected = ids
+        return self._store.bump(ids, "retrieval_count", 1)
+
+    def record_task_outcome(self, success: bool) -> int:
+        """任务结束结算：注入过的记忆按结果 +1 / −1（adoption_count）。
+
+        "被采纳"用的是可观测代理，而不是让模型自评：本轮注入过这条记忆，
+        且本轮**没有工具错误**、任务正常结束 → 记一次有用；出现过工具错误 → 记 −1。
+        结算一次就清空，避免同一个任务重复记账。
+        """
+        ids, self._last_injected = self._last_injected, []
+        if not ids:
+            return 0
+        return self._store.bump(ids, "adoption_count", 1 if success else -1)
 
     # ── Session-level context ──
 
