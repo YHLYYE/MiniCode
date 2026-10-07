@@ -182,14 +182,30 @@ class RememberTool(Tool):
     name = "Remember"
     description = (
         "Persist knowledge to long-term memory for future sessions. "
-        "memory_type: procedural (how to do X) | episodic (what happened) "
-        "| user_profile (a user preference)."
+        "Pick memory_type from the parameter description (each lists examples "
+        "and the boundary between the three)."
     )
     input_schema = {
         "memory_type": {
             "type": "string",
             "enum": ["procedural", "episodic", "user_profile"],
-            "description": "Which memory category to write to",
+            # 为什么写这么长：早先只有一句 "Which memory category to write to"，
+            # 模型只能靠英文名词猜，很容易把"可照做的规则"写成"发生过的日志"——
+            # 而类型会连带决定检索算法（程序性走 BM25、情景走余弦），选错就捞不回来。
+            # 所以这里给**本项目自己的例子**（中文 + 真实形态），而不是抽象定义。
+            "description": (
+                "Which category to write, with examples from this project:\n"
+                "- procedural —— 以后要照做的规则/修法，例如："
+                "「跑测试前必须设 MINICODE_OFFLINE=1」「改完索引要重建再跑测试」"
+                "「Edit 报 NameError: name 're' → 补 import re」\n"
+                "- episodic —— 发生过的事（事件、报错、任务轨迹），例如："
+                "「Tool errors: - Bash: NameError re」「Task: 修 skill 优先级 | 4 turns」\n"
+                "- user_profile —— 稳定的用户/项目属性，键值对，例如 "
+                "key='naming_style' value='snake_case'；**必须带 key**\n"
+                "边界：要「以后照做」→ procedural；要「复盘发生了什么」→ episodic；"
+                "稳定属性/偏好 → user_profile。同一次失败可以写两条"
+                "（一条 episodic 日志 + 一条 procedural 修法）。"
+            ),
         },
         "content": {
             "type": "string",

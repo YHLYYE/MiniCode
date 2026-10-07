@@ -489,3 +489,21 @@ async def test_inject_floor_keeps_irrelevant_tasks_clean(tmp_path):
     assert hint("把 README 的标题改成中文") == "", "无关任务不该带旧经验"
     # 手动查询走宽松门槛：同样的无关任务仍可能给出一条（宁可多给，模型自己筛）
     mm.close()
+
+
+def test_remember_tool_documents_project_examples():
+    """Remember 的三类选择必须有**本项目自己的例子**，而不是抽象英文定义。
+
+    回归背景：早先描述只有一句 Which memory category to write to，模型只能靠名词猜，
+    很容易把"可照做的规则"写成"发生过的日志" —— 而类型会连带决定检索算法
+    （程序性走 BM25、情景走余弦），选错就捞不回来。
+    """
+    from core.tools.base import RememberTool
+
+    desc = RememberTool.input_schema["memory_type"]["description"]
+    assert "procedural" in desc and "episodic" in desc and "user_profile" in desc
+    # 项目自己的例子（而不是 how to do X 这种抽象说法）
+    assert "MINICODE_OFFLINE" in desc or "重建" in desc, desc
+    assert "boundary" in desc.lower() or "边界" in desc, desc
+    # user_profile 必须带 key 这条约束也要写在描述里
+    assert "key" in desc
