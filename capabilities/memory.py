@@ -346,15 +346,9 @@ def _merge_by_rank(ranked_lists: list[list], top_k: int) -> list:
     return out
 
 
-_MIN_SIMILARITY = 0.01  # substring-level overlap floor for episodic search
-
-# 注入场景要"别吵"，手动查询要"别漏" —— 所以两个门槛分开。
-# 标定数据（固化在 tests/test_memory.py，来自 benchmarks/memory_scorer_eval.py 的语料）：
-#   真正需要情景记忆的正例，2/3-gram 余弦最低 0.111（docx 那对）
-#   反例（语料里没有相关记忆）最高 0.095
-# 取 0.10 落在两者之间。余量确实很窄 —— 这也是为什么自动注入还配了
-# "程序性至少命中 2 个词"和"每轮最多 3 条"两道限制，并且必须有开关。
-# 手动查询仍用 _MIN_SIMILARITY=0.01（宁可多给，模型自己筛）。
+# 这个常量现在**只是"严格模式"的标记值**（注入时传它、手动检索传 None），
+# 数值本身不再参与打分 —— 两类记忆都已统一用 BM25 + 命中词规则。
+# 名字是历史遗留（早先它真的是余弦门槛），改名成 strict 列在清理清单里。
 MEMORY_INJECT_MIN_SIMILARITY = 0.10
 
 # 主提示词里 CLAUDE.md 的预算。参考 Claude Code 的 auto memory 加载策略
@@ -469,7 +463,7 @@ def format_memory_hint(entries: list, top_k: int = MEMORY_HINT_TOP_K,
 
 
 def _rank_episodic(entries: list[dict], query: str, top_k: int,
-                   embedder=None, min_similarity: float | None = None) -> list[dict]:
+                   min_similarity: float | None = None) -> list[dict]:
     """情景记忆排序 —— 也用 **BM25**，与程序性共用同一条打分与证据规则。
 
     为什么把原来的 2/3-gram 余弦换掉：合并顺序修正之后重做 A/B（24 条记忆 / 21 条用例）：
@@ -551,10 +545,6 @@ class JSONMemoryStore(MemoryStore):
         self._procedural_path = self._dir / "procedural.json"
         self._episodic_path = self._dir / "episodic.json"
         self._profile_path = self._dir / "profile.json"
-        # 情景记忆用 2/3-gram（关掉 1-gram）：1-gram 让任意两段英文短文本都有
-        # 非零相似度，是检索噪声的主要来源。选型依据见 benchmarks/memory_scorer_eval.py
-        # （去掉 1-gram 后 top1 0.67→0.73、top3 0.87→0.93）。
-        self._embedder = NGramEmbeddingFunction(use_unigrams=False)
         self._max_entries = 200     # 与 SQLiteMemoryStore 的每类上限保持一致
 
     # ── MemoryStore interface ──
@@ -672,8 +662,7 @@ class JSONMemoryStore(MemoryStore):
             return []
         return [_dict_to_entry(e)
                 for e in _rank_episodic(
-                    entries, query, top_k, self._embedder,
-                    _MIN_SIMILARITY if min_similarity is None else min_similarity)]
+                    entries, query, top_k, min_similarity)]
 
     def _search_profile(self, query: str) -> list[MemoryEntry]:
         if not self._profile_path.exists():
@@ -714,8 +703,6 @@ class SQLiteMemoryStore(MemoryStore):
     def __init__(self, db_path: Path, max_entries: int = 200):
         self._db_path = db_path
         self._max_entries = max_entries
-        # 同上：情景记忆固定用 2/3-gram（选型依据见 benchmarks/memory_scorer_eval.py）
-        self._embedder = NGramEmbeddingFunction(use_unigrams=False)
         self._lock = threading.Lock()
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(
@@ -826,7 +813,6 @@ class SQLiteMemoryStore(MemoryStore):
 
     def search(self, memory_type: MemoryType | None, query: str,
                top_k: int, min_similarity: float | None = None) -> list[MemoryEntry]:
-        floor = _MIN_SIMILARITY if min_similarity is None else min_similarity
         if memory_type == MemoryType.USER_PROFILE:
             return self._search_profile(query)
         if memory_type == MemoryType.PROCEDURAL:
@@ -838,13 +824,13 @@ class SQLiteMemoryStore(MemoryStore):
         if memory_type == MemoryType.EPISODIC:
             entries = self._load_type(MemoryType.EPISODIC)
             return [_dict_to_entry(e)
-                    for e in _rank_episodic(entries, query, top_k, self._embedder,
-                                            floor)]
+                    for e in _rank_episodic(entries, query, top_k,
+                                            min_similarity)]
         # 无类型过滤 → 三类各出一份排名，再按**名次**融合。两个历史坑：
         #   ① 曾把用户画像排除在外（RecallMemory 因此永远拿不到用户偏好）；
         #   ② 曾是"三类直接拼接 + 每类各取 top_k"，既让情景永远压过程序性
         #      （实测 top1 只有 0.27），又让返回条数最多到 2~3 倍 top_k。
-        # 分数不可比（余弦有界 / BM25 无界），所以融合只比名次。
+        # 两类现在都用 BM25；但"名次融合"仍比分数更稳（不受候选规模与 top_k 影响）。
         strict = min_similarity is not None
         return _merge_by_rank([
             self._search_profile(query),          # 画像：key 命中，最可靠，放最前
@@ -854,7 +840,7 @@ class SQLiteMemoryStore(MemoryStore):
                                        min_matches=2 if strict else 1)],   # 程序性：可照做
             [_dict_to_entry(e)
              for e in _rank_episodic(self._load_type(MemoryType.EPISODIC),
-                                     query, top_k, self._embedder, floor)],  # 情景：日志
+                                     query, top_k, min_similarity)],        # 情景：日志
         ], top_k)
 
     def set_profile(self, key: str, value: str) -> None:
