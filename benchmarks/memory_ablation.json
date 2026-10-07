@@ -1,72 +1,100 @@
 {
-  "generated_at": "20261007T114252Z",
+  "generated_at": "20261007T115216Z",
   "tasks": 4,
-  "repeat": 2,
+  "repeat": 3,
   "results": {
     "no_memory": {
       "inject": false,
-      "n": 8,
-      "mean_turns": 5.5,
+      "n": 12,
+      "mean_turns": 6.0,
       "median_turns": 6.0,
       "min_turns": 4,
-      "max_turns": 6,
+      "max_turns": 9,
       "tool_errors": 1,
-      "passed": 7,
-      "mean_tokens": 15739.5,
+      "passed": 11,
+      "mean_tokens": 17889.5,
       "rows": [
         {
           "task": "跑一下 pytest 看看测试结果",
-          "turns": 6,
-          "tokens": 19156,
+          "turns": 9,
+          "tokens": 28094,
           "tool_errors": 0,
           "passed": true
         },
         {
           "task": "用 pytest 验证一下当前仓库的测试是否通过",
           "turns": 6,
-          "tokens": 16923,
+          "tokens": 18502,
           "tool_errors": 0,
           "passed": true
         },
         {
           "task": "运行 pytest，如果失败就说明原因",
-          "turns": 6,
-          "tokens": 17748,
-          "tool_errors": 1,
+          "turns": 5,
+          "tokens": 13932,
+          "tool_errors": 0,
           "passed": true
         },
         {
           "task": "先跑 pytest，再告诉我结论",
           "turns": 4,
-          "tokens": 9604,
+          "tokens": 10499,
           "tool_errors": 0,
-          "passed": false
+          "passed": true
         },
         {
           "task": "跑一下 pytest 看看测试结果",
-          "turns": 5,
-          "tokens": 13647,
+          "turns": 6,
+          "tokens": 19906,
           "tool_errors": 0,
           "passed": true
         },
         {
           "task": "用 pytest 验证一下当前仓库的测试是否通过",
           "turns": 5,
-          "tokens": 13595,
+          "tokens": 13629,
           "tool_errors": 0,
           "passed": true
         },
         {
           "task": "运行 pytest，如果失败就说明原因",
           "turns": 6,
-          "tokens": 18649,
+          "tokens": 20030,
+          "tool_errors": 0,
+          "passed": true
+        },
+        {
+          "task": "先跑 pytest，再告诉我结论",
+          "turns": 4,
+          "tokens": 9641,
+          "tool_errors": 0,
+          "passed": false
+        },
+        {
+          "task": "跑一下 pytest 看看测试结果",
+          "turns": 7,
+          "tokens": 20698,
+          "tool_errors": 1,
+          "passed": true
+        },
+        {
+          "task": "用 pytest 验证一下当前仓库的测试是否通过",
+          "turns": 9,
+          "tokens": 28803,
+          "tool_errors": 0,
+          "passed": true
+        },
+        {
+          "task": "运行 pytest，如果失败就说明原因",
+          "turns": 5,
+          "tokens": 13979,
           "tool_errors": 0,
           "passed": true
         },
         {
           "task": "先跑 pytest，再告诉我结论",
           "turns": 6,
-          "tokens": 16594,
+          "tokens": 16961,
           "tool_errors": 0,
           "passed": true
         }
@@ -74,68 +102,96 @@
     },
     "with_memory": {
       "inject": true,
-      "n": 8,
-      "mean_turns": 4.875,
-      "median_turns": 5.0,
-      "min_turns": 2,
-      "max_turns": 6,
+      "n": 12,
+      "mean_turns": 5.75,
+      "median_turns": 6.0,
+      "min_turns": 4,
+      "max_turns": 8,
       "tool_errors": 0,
-      "passed": 8,
-      "mean_tokens": 14870.25,
+      "passed": 12,
+      "mean_tokens": 18731.833333333332,
       "rows": [
         {
           "task": "跑一下 pytest 看看测试结果",
           "turns": 6,
-          "tokens": 17873,
+          "tokens": 19345,
           "tool_errors": 0,
           "passed": true
         },
         {
           "task": "用 pytest 验证一下当前仓库的测试是否通过",
-          "turns": 6,
-          "tokens": 18742,
+          "turns": 8,
+          "tokens": 26870,
           "tool_errors": 0,
           "passed": true
         },
         {
           "task": "运行 pytest，如果失败就说明原因",
-          "turns": 2,
-          "tokens": 4869,
+          "turns": 5,
+          "tokens": 15545,
           "tool_errors": 0,
           "passed": true
         },
         {
           "task": "先跑 pytest，再告诉我结论",
-          "turns": 5,
-          "tokens": 14460,
+          "turns": 7,
+          "tokens": 23078,
           "tool_errors": 0,
           "passed": true
         },
         {
           "task": "跑一下 pytest 看看测试结果",
-          "turns": 6,
-          "tokens": 19404,
+          "turns": 4,
+          "tokens": 11049,
           "tool_errors": 0,
           "passed": true
         },
         {
           "task": "用 pytest 验证一下当前仓库的测试是否通过",
-          "turns": 5,
-          "tokens": 15108,
+          "turns": 6,
+          "tokens": 18352,
           "tool_errors": 0,
           "passed": true
         },
         {
           "task": "运行 pytest，如果失败就说明原因",
-          "turns": 5,
-          "tokens": 16086,
+          "turns": 6,
+          "tokens": 22307,
           "tool_errors": 0,
           "passed": true
         },
         {
           "task": "先跑 pytest，再告诉我结论",
           "turns": 4,
-          "tokens": 12420,
+          "tokens": 12063,
+          "tool_errors": 0,
+          "passed": true
+        },
+        {
+          "task": "跑一下 pytest 看看测试结果",
+          "turns": 6,
+          "tokens": 19337,
+          "tool_errors": 0,
+          "passed": true
+        },
+        {
+          "task": "用 pytest 验证一下当前仓库的测试是否通过",
+          "turns": 5,
+          "tokens": 16385,
+          "tool_errors": 0,
+          "passed": true
+        },
+        {
+          "task": "运行 pytest，如果失败就说明原因",
+          "turns": 6,
+          "tokens": 20925,
+          "tool_errors": 0,
+          "passed": true
+        },
+        {
+          "task": "先跑 pytest，再告诉我结论",
+          "turns": 6,
+          "tokens": 19526,
           "tool_errors": 0,
           "passed": true
         }
