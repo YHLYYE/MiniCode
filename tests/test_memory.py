@@ -216,6 +216,33 @@ def test_project_rules_reads_the_file(tmp_path):
     assert mm.project_rules() == "禁止用 Tab 缩进"
 
 
+# ── 不带类型过滤的搜索：三类都要搜，且条数受 top_k 约束 ──
+# 回归背景：两个后端原来都是"episodic + procedural"，把用户画像排除在外，
+# 而 RecallMemoryTool 的描述里承诺了 "project conventions"；而且每类各取
+# top_k 再相加，传 top_k=3 会拿到最多 6 条，top_k 契约失效。
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["sqlite", "json"])
+async def test_untyped_search_covers_all_three_types_and_respects_top_k(tmp_path, backend):
+    store = (None if backend == "sqlite"
+             else JSONMemoryStore(tmp_path / "json_memories"))
+    mm = MemoryManager(project_root=tmp_path, store=store)
+    for i in range(3):
+        await mm.record_procedural(f"重建索引再跑测试 pattern{i}")
+        await mm.record_episodic(f"Task: 重建索引 pattern{i}")
+    await mm.record_user_profile("index_habit", "改完索引先重建再跑测试")
+
+    hits = await mm.search("重建索引", top_k=3)
+    assert len(hits) <= 3, f"top_k=3 却返回了 {len(hits)} 条"
+
+    # 画像必须能通过"不带类型"的搜索拿到（key 命中）
+    profile_hits = await mm.search("index_habit", top_k=5)
+    assert any(h.type == "user_profile" for h in profile_hits), (
+        "用户画像在无类型搜索里查不到 —— RecallMemory 就永远拿不到用户偏好"
+    )
+    mm.close()
+
+
 # ── 会话摘要（此前是死代码：定义了但没人调用） ──
 
 def test_session_summary_round_trip(tmp_path):

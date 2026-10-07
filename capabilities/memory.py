@@ -253,8 +253,11 @@ class JSONMemoryStore(MemoryStore):
             return self._search_procedural(query, top_k)
         if memory_type == MemoryType.EPISODIC:
             return self._search_episodic(query, top_k)
-        # No type filter → episodic + procedural
-        return self._search_episodic(query, top_k) + self._search_procedural(query, top_k)
+        # 无类型过滤 → 三类都搜，并**统一截断到 top_k**（与 SQLiteMemoryStore 保持一致）
+        results = self._search_profile(query)
+        results += self._search_episodic(query, top_k)
+        results += self._search_procedural(query, top_k)
+        return results[:top_k]
 
     def set_profile(self, key: str, value: str) -> None:
         self._dir.mkdir(parents=True, exist_ok=True)
@@ -414,14 +417,19 @@ class SQLiteMemoryStore(MemoryStore):
             entries = self._load_type(MemoryType.EPISODIC)
             return [_dict_to_entry(e)
                     for e in _rank_episodic(entries, query, top_k, self._embedder)]
-        # No type filter → episodic (cosine) + procedural (keyword)
-        episodic = [_dict_to_entry(e)
+        # 无类型过滤 → 三类都搜，并统一截断到 top_k。这里原先有两个坑：
+        #   ① 把用户画像排除在外，于是 RecallMemory 永远拿不到用户偏好
+        #      （可它的描述里承诺了 "project conventions"）；
+        #   ② "每类各取 top_k 再相加"，调用方传 top_k=3 会拿到最多 6 条 —— top_k 契约失效。
+        # 顺序即优先级：画像（key 命中，最可靠）→ 情景（n-gram 余弦）→ 程序性（关键词交集）。
+        results = self._search_profile(query)
+        results += [_dict_to_entry(e)
                     for e in _rank_episodic(self._load_type(MemoryType.EPISODIC),
                                             query, top_k, self._embedder)]
-        procedural = [_dict_to_entry(e)
-                      for e in _rank_procedural(self._load_type(MemoryType.PROCEDURAL),
-                                                query, top_k)]
-        return episodic + procedural
+        results += [_dict_to_entry(e)
+                    for e in _rank_procedural(self._load_type(MemoryType.PROCEDURAL),
+                                              query, top_k)]
+        return results[:top_k]
 
     def set_profile(self, key: str, value: str) -> None:
         with self._lock:
@@ -496,7 +504,7 @@ class MemoryManager:
 
     Manages session-level context (CLAUDE.md, session summary) directly,
     and delegates entry-level memory (procedural/episodic/profile) to the
-    configured store (default: JSONMemoryStore).
+    configured store (default: SQLiteMemoryStore).
     """
 
     def __init__(self, project_root: Path | None = None,
@@ -575,8 +583,13 @@ class MemoryManager:
 
     # ── Backward-compatible convenience methods ──
 
-    async def record_file_edit(self, file_path: str, old: str, new: str,
-                               context: str = ""):
+    async def record_file_edit(self, file_path: str):
+        """记一条"改过这个文件"的情景记忆。
+
+        只记路径、**不记改动内容**：记忆是给后续检索用的，把代码正文写进去既费
+        token 又容易过时，全文另有 ContextCompressor 的 record_edit 负责回灌。
+        （原来签名里还挂着 old/new 两个参数，但从未被使用，调用方传的是空串 —— 已删除。）
+        """
         await self.record_episodic(f"Edited {file_path}", file_paths=[file_path])
 
     # ── Search ──

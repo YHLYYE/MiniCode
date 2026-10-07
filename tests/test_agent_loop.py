@@ -196,6 +196,31 @@ async def test_agent_loop_tool_not_found():
 
 
 @pytest.mark.asyncio
+async def test_unknown_tool_is_recorded_in_memory_like_any_other_failure(tmp_path):
+    """工具名不存在也算失败，要和其他工具错误一样沉淀进情景记忆。
+
+    回归背景：这条路径是提前 return 的，绕过了 tool_errors 收集 —— 于是
+    情景记忆里只留下"任务完成"，复盘时看不出这轮是因为工具名写错才绕路。
+    """
+    mm = MemoryManager(project_root=tmp_path)
+    mock = MockModelAdapter([
+        [make_tool_use("nonexistent_tool", {"arg": "val"}), make_stop("end_turn")],
+        [make_text("改用已有工具"), make_stop("end_turn")],
+    ])
+    loop = AgentLoop(tools=[MockTool()], model_adapter=mock,
+                     system_prompt="Test agent.", memory_manager=mm)
+    async for _ in loop.run("call a missing tool"):
+        pass
+
+    hits = await mm.search("Tool not found", top_k=5,
+                           memory_type=MemoryType.EPISODIC)
+    assert any("Tool not found" in h.content for h in hits), (
+        "未知工具的失败没有进情景记忆"
+    )
+    mm.close()
+
+
+@pytest.mark.asyncio
 async def test_agent_loop_tool_execution_error():
     """Tool raises an exception → error captured, agent continues"""
     class FailingTool(Tool):

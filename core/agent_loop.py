@@ -354,9 +354,15 @@ class AgentLoop:
                 """
                 tool = self._tools.get(tool_name)
                 if tool is None:
+                    # 模型编了个不存在的工具名，同样是"失败"，应当和工具抛异常走
+                    # 同一条沉淀路径 —— 否则情景记忆里只会留下"任务完成"，
+                    # 复盘时看不出这轮其实是因为工具名错了才绕路。
+                    available = list(self._tools.keys())
+                    tool_errors.append(ToolError(
+                        tool_name, f"Tool not found. Available: {available}"))
                     return (tool_name, tool_call_id, tool_input, None,
                             f"Error: Tool '{tool_name}' not found. "
-                            f"Available: {list(self._tools.keys())}")
+                            f"Available: {available}")
                 try:
                     # Security check before execution（fail-closed：False 拒绝执行）
                     tc = ToolCall(tool_name, tool_input)
@@ -431,9 +437,7 @@ class AgentLoop:
                         if result.startswith(("Created ", "Updated ")):
                             self._compressor.record_edit(file_path, content)
                             if self._memory is not None:
-                                await self._memory.record_file_edit(
-                                    file_path, "", ""
-                                )
+                                await self._memory.record_file_edit(file_path)
                 # Edit 成功 → 同样登记。此前只登记 Write，而改存量代码用的是
                 # Edit：一个以 Edit 为主的改造任务跑长之后触发 Autocompact，
                 # 最近改过的文件内容一条都回灌不回来（Write 路径有、Edit 没有）。
