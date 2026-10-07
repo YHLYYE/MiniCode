@@ -274,7 +274,12 @@ def _rank_procedural(entries: list[dict], query: str, top_k: int,
         if score <= 0:
             continue
         matched = set(tokens) & query_terms
-        if not _match_is_evidence(matched, min_matches):
+        # 用户显式纠正过的条目走**更低的门槛**：它们本质上是"以后都要照做"的规则，
+        # 更接近 CLAUDE.md 那种"常驻"语义，不该和普通经验一样去拼命中词数。
+        # 实测（离线）：4 条纠正用自然问法去查，有 3 条因为只命中 1 个中文 bigram
+        # 被严格规则筛掉 —— 门槛当初是为"长任务描述"调的，对短句纠正不适用。
+        entry_min = 1 if (entry.get("context") == "user_correction") else min_matches
+        if not _match_is_evidence(matched, entry_min):
             continue
         scored.append((entry, score * (1.0 if entry.get("success", True) else 0.5)))
     scored.sort(key=lambda x: x[1], reverse=True)

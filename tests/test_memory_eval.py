@@ -93,3 +93,32 @@ async def test_irrelevant_tasks_get_no_memory_hits(tmp_path):
             leaked.append((query, [h.content[:40] for h in hits]))
     mm.close()
     assert not leaked, f"无关任务漏进了记忆：{leaked}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["sqlite", "json"])
+async def test_user_corrections_are_recallable_with_natural_queries(tmp_path, backend):
+    """用户纠正走更低门槛 —— 否则"记了纠正却召不回"等于没记。
+
+    实测发现：4 条纠正用自然问法去查，有 3 条因为只命中 1 个中文 bigram 被严格规则
+    筛掉（门槛当初是为"长任务描述"调的，对短句纠正不适用）。纠正本质上是"以后都要
+    照做"的规则，更接近 CLAUDE.md 的常驻语义，所以单独开一条通道。
+    """
+    from capabilities.memory import (MEMORY_INJECT_MIN_SIMILARITY,
+                                     JSONMemoryStore, MemoryManager)
+
+    store = (None if backend == "sqlite"
+             else JSONMemoryStore(tmp_path / "json_memories"))
+    mm = MemoryManager(project_root=tmp_path, store=store)
+    await mm.record_procedural("用户纠正：以后不要用 Tab 缩进，改用 4 个空格",
+                               context="user_correction")
+
+    for query in ("按项目约定，缩进用什么？", "这个仓库的缩进规范是什么"):
+        hits = mm.search_sync(query, top_k=3,
+                              min_similarity=MEMORY_INJECT_MIN_SIMILARITY)
+        assert hits and "Tab" in hits[0].content, (query, [h.content for h in hits])
+
+    # 无关任务仍然不许命中（降低门槛不能变成开闸放水）
+    assert mm.search_sync("把 README 的标题改成中文", top_k=3,
+                          min_similarity=MEMORY_INJECT_MIN_SIMILARITY) == []
+    mm.close()
