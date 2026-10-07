@@ -242,6 +242,28 @@ def _match_is_evidence(matched: set[str], min_matches: int) -> bool:
     return False
 
 
+def _ranking_bonus(entry: dict, matched: set[str]) -> float:
+    """排序加成（不改命中判定，只改先后顺序）。
+
+    三个因子，都刻意做得很温和 —— 它们的目标是"把已经命中的条目排得更准"，
+    不是改变谁能进来：
+      ① 失败过的经验降权 0.5（原逻辑保留）；
+      ② **命中覆盖率**：命中的查询词越多越可信（`1 + 0.3×(命中数−1)`）。
+         动机：top-1 只有 0.48，而 top-3 有 0.95 —— 瓶颈在"排不到第一"，
+         而"只命中一个词的条目"经常靠 BM25 的短文档优势压过命中的更全的条目；
+      ③ **计数器加成**：被检索过、被证明有用的经验往前排（`1 + 0.02×命中次数 + 0.05×采纳数`，各自封顶 5）。
+         动机：让计数器真正参与决策，而不只是记账。评测里的语料计数器都是 0，
+         所以这一项不会扰动已有的基线数字。
+    """
+    bonus = 1.0 if entry.get("success", True) else 0.5
+    if matched:
+        bonus *= 1.0 + 0.3 * (len(matched) - 1)
+    retrieval = min(int(entry.get("retrieval_count", 0) or 0), 5)
+    adoption = min(max(int(entry.get("adoption_count", 0) or 0), 0), 5)
+    bonus *= 1.0 + 0.02 * retrieval + 0.05 * adoption
+    return bonus
+
+
 def _rank_procedural(entries: list[dict], query: str, top_k: int,
                      min_matches: int = 1) -> list[dict]:
     """程序性记忆排序 —— BM25（带 IDF）。
@@ -281,7 +303,7 @@ def _rank_procedural(entries: list[dict], query: str, top_k: int,
         entry_min = 1 if (entry.get("context") == "user_correction") else min_matches
         if not _match_is_evidence(matched, entry_min):
             continue
-        scored.append((entry, score * (1.0 if entry.get("success", True) else 0.5)))
+        scored.append((entry, score * _ranking_bonus(entry, matched)))
     scored.sort(key=lambda x: x[1], reverse=True)
     return [e for e, _ in scored[:top_k]]
 
@@ -449,7 +471,7 @@ def _rank_episodic(entries: list[dict], query: str, top_k: int,
         # 同样只在查询侧扩展：文档侧保持原样，避免改变已标定的余弦分布
         sim = embedder.similarity(expand_aliases(query), e.get("content", ""))
         if sim > min_similarity:
-            score = sim * (1.0 if e.get("success", True) else 0.5)
+            score = sim * _ranking_bonus(e, set())
             scored.append((e, score))
     scored.sort(key=lambda x: x[1], reverse=True)
     return [e for e, _ in scored[:top_k]]

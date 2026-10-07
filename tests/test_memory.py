@@ -424,6 +424,31 @@ def test_alias_expansion_leaves_unknown_text_alone():
     assert expand_aliases("") == ""
 
 
+# ── 排序加成（精排）：不再只靠 BM25 原始分 ──
+
+def test_ranking_bonus_rewards_coverage_and_usage():
+    """命中覆盖率高、被用过且被证明有用的条目，排序加成更高。
+
+    注意：这一项**不影响谁能进候选**（那是 `_match_is_evidence` 的职责），
+    只影响先后顺序。评测语料里的计数器都是 0，所以它不扰动已有基线数字 ——
+    这条测试就是它的行为契约。
+    """
+    from capabilities.memory import _ranking_bonus
+
+    base = {"success": True}
+    one_match = _ranking_bonus(base, {"docx"})
+    three_match = _ranking_bonus(base, {"docx", "install", "依赖"})
+    assert three_match > one_match, "命中更多的应该排在前面"
+
+    used = {"success": True, "retrieval_count": 4, "adoption_count": 3}
+    assert _ranking_bonus(used, {"docx"}) > _ranking_bonus(base, {"docx"}), \
+        "被检索过、被采纳过的经验应该加权"
+
+    failed = {"success": False}
+    assert _ranking_bonus(failed, {"docx"}) < _ranking_bonus(base, {"docx"}), \
+        "失败过的尝试仍要降权"
+
+
 # ── 注入场景的相关性下限（标定数据固化在这里）──
 
 def test_ngram_similarity_separates_relevant_from_irrelevant():
