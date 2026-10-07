@@ -8,6 +8,7 @@ permission; security is layered so no single check is the sole gate.
 import asyncio
 import json
 import re
+import os
 from enum import Enum
 from pathlib import Path
 
@@ -288,6 +289,15 @@ class PermissionManager:
         self, tool_call: ToolCall, risk: RiskLevel
     ) -> bool:
         """Block and wait for user confirmation."""
+        # 非交互场景（基准 / CI / 批处理）拿不到人，默认 fail-closed 拒绝 —— 这在
+        # 自动化里会把**合法的基准命令也拒掉**（实测：跑消融时模型执行 `type .env`
+        # 被拦下，记成工具错误并改变后续路径，随机污染指标）。
+        # 所以给一个**显式**开关：只有明确设了 MINICODE_AUTO_APPROVE=1 才自动放行，
+        # 并打印警告；没设时行为完全不变（问人 / 拒绝）。
+        if os.environ.get("MINICODE_AUTO_APPROVE") == "1":
+            print(f"[非交互模式] 自动放行高风险操作（{risk.value}）："
+                  f"{tool_call.name} {json.dumps(tool_call.input, ensure_ascii=False)[:120]}")
+            return True
         print(f"""
 {'!' * 60}
 ⚠  HIGH RISK OPERATION ({risk.value})

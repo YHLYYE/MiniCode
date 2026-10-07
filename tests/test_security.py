@@ -146,3 +146,35 @@ async def test_edit_reaches_human_approval_when_classifier_says_high():
     # pytest 下 stdin 为 EOF → _request_approval 捕获 EOFError → False
     assert await pm.authorize(ToolCall("Edit", {"file_path": "a.py"}),
                               is_destructive=True) is False
+
+
+@pytest.mark.asyncio
+async def test_auto_approve_switch_is_off_by_default(monkeypatch):
+    """默认没有非交互开关：L4 拿不到人 → fail-closed 拒绝。"""
+    monkeypatch.delenv("MINICODE_AUTO_APPROVE", raising=False)
+
+    class HighModel:
+        async def chat(self, **kwargs):
+            return '{"risk": "high", "reason": "writes code"}'
+
+    pm = PermissionManager(model=HighModel())
+    assert await pm.authorize(ToolCall("Edit", {"file_path": "a.py"}),
+                              is_destructive=True) is False
+
+
+@pytest.mark.asyncio
+async def test_auto_approve_switch_allows_non_interactive_runs(monkeypatch):
+    """显式打开 MINICODE_AUTO_APPROVE=1 才自动放行 —— 给基准/CI 用。
+
+    动机：跑记忆消融时，模型执行 `type .env` 这类命令会撞到 L4，非交互环境拿不到
+    输入于是被拒（fail-closed 本身是对的），却随机记成工具错误、污染指标。
+    """
+    monkeypatch.setenv("MINICODE_AUTO_APPROVE", "1")
+
+    class HighModel:
+        async def chat(self, **kwargs):
+            return '{"risk": "high", "reason": "writes code"}'
+
+    pm = PermissionManager(model=HighModel())
+    assert await pm.authorize(ToolCall("Edit", {"file_path": "a.py"}),
+                              is_destructive=True) is True

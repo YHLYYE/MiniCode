@@ -1,40 +1,72 @@
 {
-  "generated_at": "20261007T113558Z",
+  "generated_at": "20261007T114252Z",
   "tasks": 4,
+  "repeat": 2,
   "results": {
     "no_memory": {
       "inject": false,
-      "n": 4,
-      "mean_turns": 6.25,
-      "tool_errors": 0,
-      "passed": 2,
-      "mean_tokens": 17171.0,
+      "n": 8,
+      "mean_turns": 5.5,
+      "median_turns": 6.0,
+      "min_turns": 4,
+      "max_turns": 6,
+      "tool_errors": 1,
+      "passed": 7,
+      "mean_tokens": 15739.5,
       "rows": [
         {
           "task": "跑一下 pytest 看看测试结果",
-          "turns": 5,
-          "tokens": 13403,
+          "turns": 6,
+          "tokens": 19156,
           "tool_errors": 0,
-          "passed": false
+          "passed": true
         },
         {
           "task": "用 pytest 验证一下当前仓库的测试是否通过",
-          "turns": 8,
-          "tokens": 23765,
+          "turns": 6,
+          "tokens": 16923,
           "tool_errors": 0,
           "passed": true
         },
         {
           "task": "运行 pytest，如果失败就说明原因",
-          "turns": 5,
-          "tokens": 13016,
+          "turns": 6,
+          "tokens": 17748,
+          "tool_errors": 1,
+          "passed": true
+        },
+        {
+          "task": "先跑 pytest，再告诉我结论",
+          "turns": 4,
+          "tokens": 9604,
           "tool_errors": 0,
           "passed": false
         },
         {
+          "task": "跑一下 pytest 看看测试结果",
+          "turns": 5,
+          "tokens": 13647,
+          "tool_errors": 0,
+          "passed": true
+        },
+        {
+          "task": "用 pytest 验证一下当前仓库的测试是否通过",
+          "turns": 5,
+          "tokens": 13595,
+          "tool_errors": 0,
+          "passed": true
+        },
+        {
+          "task": "运行 pytest，如果失败就说明原因",
+          "turns": 6,
+          "tokens": 18649,
+          "tool_errors": 0,
+          "passed": true
+        },
+        {
           "task": "先跑 pytest，再告诉我结论",
-          "turns": 7,
-          "tokens": 18500,
+          "turns": 6,
+          "tokens": 16594,
           "tool_errors": 0,
           "passed": true
         }
@@ -42,37 +74,68 @@
     },
     "with_memory": {
       "inject": true,
-      "n": 4,
-      "mean_turns": 6.75,
-      "tool_errors": 2,
-      "passed": 3,
-      "mean_tokens": 20851.25,
+      "n": 8,
+      "mean_turns": 4.875,
+      "median_turns": 5.0,
+      "min_turns": 2,
+      "max_turns": 6,
+      "tool_errors": 0,
+      "passed": 8,
+      "mean_tokens": 14870.25,
       "rows": [
         {
           "task": "跑一下 pytest 看看测试结果",
           "turns": 6,
-          "tokens": 18372,
+          "tokens": 17873,
           "tool_errors": 0,
           "passed": true
         },
         {
           "task": "用 pytest 验证一下当前仓库的测试是否通过",
-          "turns": 8,
-          "tokens": 24848,
-          "tool_errors": 1,
+          "turns": 6,
+          "tokens": 18742,
+          "tool_errors": 0,
+          "passed": true
+        },
+        {
+          "task": "运行 pytest，如果失败就说明原因",
+          "turns": 2,
+          "tokens": 4869,
+          "tool_errors": 0,
+          "passed": true
+        },
+        {
+          "task": "先跑 pytest，再告诉我结论",
+          "turns": 5,
+          "tokens": 14460,
+          "tool_errors": 0,
+          "passed": true
+        },
+        {
+          "task": "跑一下 pytest 看看测试结果",
+          "turns": 6,
+          "tokens": 19404,
+          "tool_errors": 0,
+          "passed": true
+        },
+        {
+          "task": "用 pytest 验证一下当前仓库的测试是否通过",
+          "turns": 5,
+          "tokens": 15108,
+          "tool_errors": 0,
           "passed": true
         },
         {
           "task": "运行 pytest，如果失败就说明原因",
           "turns": 5,
-          "tokens": 14496,
-          "tool_errors": 1,
-          "passed": false
+          "tokens": 16086,
+          "tool_errors": 0,
+          "passed": true
         },
         {
           "task": "先跑 pytest，再告诉我结论",
-          "turns": 8,
-          "tokens": 25689,
+          "turns": 4,
+          "tokens": 12420,
           "tool_errors": 0,
           "passed": true
         }
