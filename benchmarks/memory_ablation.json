@@ -1,0 +1,82 @@
+{
+  "generated_at": "20261007T113558Z",
+  "tasks": 4,
+  "results": {
+    "no_memory": {
+      "inject": false,
+      "n": 4,
+      "mean_turns": 6.25,
+      "tool_errors": 0,
+      "passed": 2,
+      "mean_tokens": 17171.0,
+      "rows": [
+        {
+          "task": "跑一下 pytest 看看测试结果",
+          "turns": 5,
+          "tokens": 13403,
+          "tool_errors": 0,
+          "passed": false
+        },
+        {
+          "task": "用 pytest 验证一下当前仓库的测试是否通过",
+          "turns": 8,
+          "tokens": 23765,
+          "tool_errors": 0,
+          "passed": true
+        },
+        {
+          "task": "运行 pytest，如果失败就说明原因",
+          "turns": 5,
+          "tokens": 13016,
+          "tool_errors": 0,
+          "passed": false
+        },
+        {
+          "task": "先跑 pytest，再告诉我结论",
+          "turns": 7,
+          "tokens": 18500,
+          "tool_errors": 0,
+          "passed": true
+        }
+      ]
+    },
+    "with_memory": {
+      "inject": true,
+      "n": 4,
+      "mean_turns": 6.75,
+      "tool_errors": 2,
+      "passed": 3,
+      "mean_tokens": 20851.25,
+      "rows": [
+        {
+          "task": "跑一下 pytest 看看测试结果",
+          "turns": 6,
+          "tokens": 18372,
+          "tool_errors": 0,
+          "passed": true
+        },
+        {
+          "task": "用 pytest 验证一下当前仓库的测试是否通过",
+          "turns": 8,
+          "tokens": 24848,
+          "tool_errors": 1,
+          "passed": true
+        },
+        {
+          "task": "运行 pytest，如果失败就说明原因",
+          "turns": 5,
+          "tokens": 14496,
+          "tool_errors": 1,
+          "passed": false
+        },
+        {
+          "task": "先跑 pytest，再告诉我结论",
+          "turns": 8,
+          "tokens": 25689,
+          "tool_errors": 0,
+          "passed": true
+        }
+      ]
+    }
+  }
+}
