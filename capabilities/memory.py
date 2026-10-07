@@ -264,8 +264,11 @@ def _rank_procedural(entries: list[dict], query: str, top_k: int,
     if not entries:
         return []
     docs = [keyword_tokens(e.get("content", "")) for e in entries]
-    scores = _bm25_scores(docs, query)
-    query_terms = keyword_tokens(query)
+    # 只在**查询侧**做别名扩展：存进去的内容保持原文，BM25 的统计量（IDF）也就
+    # 不受词典影响 —— 换词典、换检索方案都不用迁移数据。
+    expanded_query = expand_aliases(query)
+    scores = _bm25_scores(docs, expanded_query)
+    query_terms = keyword_tokens(expanded_query)
     scored = []
     for entry, tokens, score in zip(entries, docs, scores):
         if score <= 0:
@@ -331,6 +334,58 @@ MAX_CLAUDE_MD_CHARS = 8000
 MEMORY_HINT_TOP_K = 3
 MEMORY_HINT_MAX_CHARS = 600
 
+# ── 领域词典（别名归一化）──
+# 动机：记忆是字面检索，而**中英混排**是这个项目的常态 —— 用户用中文提问，
+# 记忆里却常常是英文标识符（`Edited core/agent_loop.py`、`pip install python-docx`）。
+# 纯词面匹配在这种情况下是 0 命中（实测 3 个固定的 MISS 里 2 个属于这一类）。
+#
+# 这里是**双向**扩展：命中左边的词就同时补上右边的英文标识符，反之亦然。
+# 为什么用词典而不是 embedding：确定、零成本、可解释；哪些词对不上能一眼看出来。
+# 边界：词典只能覆盖写下来的词对，没写进去的表达照样漏 —— 这是"先做廉价版"的取舍。
+DOMAIN_ALIASES: tuple[tuple[str, str], ...] = (
+    ("测试", "pytest"),
+    ("跑测试", "run_tests"),
+    ("索引", "index"),
+    ("优先级", "priority"),
+    ("依赖", "dependency"),
+    ("装不上", "install"),
+    ("安装", "install"),
+    ("报错", "error"),
+    ("错误", "error"),
+    ("环境变量", "env"),
+    ("技能", "skill"),
+    ("压缩", "compress"),
+    ("阈值", "threshold"),
+    ("文件", "file"),
+    ("改了", "edited"),
+    ("改动", "edited"),
+    ("成本", "cost"),
+    ("价目表", "price"),
+    ("记忆", "memory"),
+    ("语义", "semantic"),
+    ("向量", "vector"),
+)
+
+
+def expand_aliases(text: str) -> str:
+    """按领域词典做双向别名扩展，返回"原文 + 补上的别名"。
+
+    只用于**检索**（打分前），不改写存进去的内容 —— 记忆保持原文，
+    将来换词典、换检索方案都不需要迁移数据。
+    """
+    if not text:
+        return text
+    low = text.lower()
+    extra: list[str] = []
+    for zh, en in DOMAIN_ALIASES:
+        if zh in text and en.lower() not in low:
+            extra.append(en)
+        elif en.lower() in low and zh not in text:
+            extra.append(zh)
+    if not extra:
+        return text
+    return text + " " + " ".join(extra)
+
 _TYPE_LABELS = {
     "procedural": "经验",
     "episodic": "事件",
@@ -386,7 +441,8 @@ def _rank_episodic(entries: list[dict], query: str, top_k: int,
     """n-gram cosine ranking for episodic memory (shared by backends)."""
     scored = []
     for e in entries:
-        sim = embedder.similarity(query, e.get("content", ""))
+        # 同样只在查询侧扩展：文档侧保持原样，避免改变已标定的余弦分布
+        sim = embedder.similarity(expand_aliases(query), e.get("content", ""))
         if sim > min_similarity:
             score = sim * (1.0 if e.get("success", True) else 0.5)
             scored.append((e, score))

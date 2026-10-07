@@ -402,6 +402,28 @@ def test_store_bump_rejects_unknown_counter(tmp_path):
         store.bump(["x"], "not_a_counter", 1)
 
 
+# ── 领域词典（查询侧别名扩展）──
+# 动机：用户用中文提问、记忆里是英文标识符时，纯字面匹配是 0 命中
+# （实测固定的 3 个 MISS 里 2 个属于这一类）。
+
+def test_alias_expansion_is_bidirectional():
+    from capabilities.memory import expand_aliases
+
+    # 中文 → 补英文标识符
+    assert "file" in expand_aliases("上次改了哪个文件")
+    assert "install" in expand_aliases("上次那个装不上的依赖")
+    # 英文 → 补中文（反向）
+    assert "文件" in expand_aliases("which file did I edit")
+
+
+def test_alias_expansion_leaves_unknown_text_alone():
+    from capabilities.memory import expand_aliases
+
+    plain = "把 README 的标题改成中文"
+    assert expand_aliases(plain) == plain, "没有别名命中时不该动原文"
+    assert expand_aliases("") == ""
+
+
 # ── 注入场景的相关性下限（标定数据固化在这里）──
 
 def test_ngram_similarity_separates_relevant_from_irrelevant():

@@ -18,12 +18,14 @@ from capabilities.memory import (MEMORY_INJECT_MIN_SIMILARITY,  # noqa: E402
 
 _CONTENT_BY_ID = {m["id"]: m["content"] for m in MEMORIES}
 # 及格线取实测值往下留一点余量，掉下来就该有人看。两组数字对应两种消费方：
-#   自动注入（严格）：top1 0.52 / top3 0.86，**反例零漏**（宁缺毋滥）
-#   手动检索（宽松）：top1 0.19 / top3 0.81，反例 8/8 会漏（宁可多给，模型自己筛）
-# 注入侧从 0.40/0.67 提到 0.52/0.86，靠三件事：融合从按名次 RRF 改成按名次交错、
-# "≥2 词命中"改成"≥2 词或命中 ASCII 标识符"、评测语料从 12 条扩到 24 条（IDF 才有区分度）。
-MIN_TOP3_STRICT, MIN_TOP1_STRICT = 0.80, 0.45
-MIN_TOP3_LOOSE = 0.75
+#   自动注入（严格）：top1 0.48 / top3 0.95，**反例零漏**（宁缺毋滥）
+#   手动检索（宽松）：top1 0.10 / top3 0.95，反例 8/8 会漏（宁可多给，模型自己筛）
+# 注入侧一路从 0.40/0.67 提到 0.48/0.95，靠四件事：融合从按名次 RRF 改成按名次交错、
+# "≥2 词命中"改成"≥2 词或命中 ASCII 标识符"、评测语料 12→24 条（IDF 才有区分度）、
+# 查询侧领域词典（中文问句 ↔ 英文标识符双向扩展）。
+# 注意 top1 偏低是刻意的取舍：查询扩展让更多条目命中（top3 涨），代价是第一位更挤。
+MIN_TOP3_STRICT, MIN_TOP1_STRICT = 0.90, 0.45
+MIN_TOP3_LOOSE = 0.90
 
 
 @pytest.mark.asyncio
