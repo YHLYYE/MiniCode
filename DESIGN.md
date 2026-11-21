@@ -34,7 +34,7 @@
 ┌────────────────────────────────────────────┐
 │         能力层（5 大模块）                 │
 │  Skill 系统 — 上下文变换器 + 按需加载      │
-│  记忆系统 — CLAUDE.md + 摘要 + n-gram 检索 │
+│  记忆系统 — 作用域 + 冲突治理 + BM25 召回     │
 │  上下文压缩 — 三级降级链（+ 工具层截断）   │
 │  多Agent协作 — AgentTool 统一路由          │
 │  安全审查 — 四层纵深防御 + Plan/Normal     │
@@ -85,7 +85,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 323 个测试
+└── tests/                     # 335 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -104,8 +104,8 @@ Desktop/minicode/
 | Agent Loop | 100% 自研 while-true | 设计核心，逐行可解释 |
 | 工具装饰器 | 自研 Tool ABC | 控制所有行为，不依赖框架 |
 | CLI | Click | 简单，`python main.py` 交互式 REPL |
-| 记忆检索 | 纯 Python n-gram 哈希 + 余弦相似度 | 评估 ChromaDB 后（Windows onnxruntime 崩溃）自研，零外部模型 |
-| 记忆存储 | 可插拔 `MemoryStore` 接口（默认 JSON） | 借鉴 DeepAgents，可切换 SQLite/ChromaDB/Redis |
+| 记忆检索 | BM25 + 别名扩展 + 严格证据门槛 | 代码记忆以路径、报错串和标识符为主，字面检索收益高且零请求时模型成本 |
+| 记忆存储 | 可插拔 `MemoryStore` 接口（默认 SQLite） | 事务、去重、迁移和并发写入更可靠，仍可切换 JSON/ChromaDB/Redis |
 | 文件系统 | 可插拔 `FilesystemBackend` 接口（默认本地） | 借鉴 DeepAgents，可切换 Docker 沙箱/远程 |
 | 会话持久化 | SessionStore（JSON 文件） | 跨进程恢复，`--resume` 续聊 |
 | Token 计数 | tiktoken（cl100k_base） | 精确，Claude/GPT 通用 |
@@ -903,15 +903,50 @@ def count_tokens(messages) -> int:
 
 ```
 三类记忆（按认知科学分类）：
-  1. 程序性记忆 Procedural — "怎么做"，长期，JSON 文件 + 关键词检索
-  2. 情景记忆 Episodic — "发生过什么"，中期，JSON + n-gram 向量检索
-  3. 用户画像 User Profile — "用户偏好"，长期，JSON 键值对
+  1. 程序性记忆 Procedural — "怎么做"，可长期复用
+  2. 情景记忆 Episodic — "发生过什么"，偏过程诊断
+  3. 用户画像 User Profile — 用户长期偏好
 
 存储层可插拔（借鉴 DeepAgents 的 pluggable store backends）：
-  MemoryStore 接口 → JSONMemoryStore（默认，零依赖）| SQLite | ChromaDB | Redis
+  MemoryStore 接口 → SQLiteMemoryStore（默认）| JSON | ChromaDB | Redis
 ```
 
-### 6.2 实现：可插拔 MemoryStore
+### 6.2 实现：作用域、冲突与结果反馈
+
+每条记忆除正文外还保存 `scope / source / evidence_level / subject_key / status /
+conflict_group / supersedes_id / success_count / failure_count`。旧 SQLite 数据在启动时
+幂等迁移，默认归为 `persistent + active`。
+
+**作用域**
+
+- `persistent`：用户纠正、验证后的修法和显式 Remember，可进入后续任务；
+- `current_task`：原始工具报错、文件操作日志和任务摘要，只供当前任务手动查询。
+
+自动提示词只查询持久记忆；`RecallMemory` 手动检索可查看两类。
+
+**写时冲突**
+
+```
+内容指纹完全相同 → 更新原条目
+同 subject_key 的新用户纠正 → 旧规则 superseded，新规则 active
+同 subject_key 但证据不足以替代 → 双方 conflicted
+无 subject_key 且词项重合度 ≥ 0.6 → 标为疑似冲突
+其他 → 独立 active
+```
+
+冲突检测完全本地、确定性，不调用模型。冲突记录在注入时显示 `[存在冲突]` 和
+“历史记录，仅供参考”，不会被渲染成无条件指令。
+
+**结果反馈**
+
+注入过的记忆按最终终止原因结算：
+
+```
+COMPLETED → success_count +1
+VERIFY_FAILED / MAX_TURNS / EMPTY_RESPONSE / MAX_OUTPUT_TOKENS → failure_count +1
+```
+
+排序在原 BM25 分数上增加温和反馈，不再把工具报错作为成功与否的代理。
 
 ```python
 class MemoryStore(ABC):
@@ -919,28 +954,25 @@ class MemoryStore(ABC):
     @abstractmethod
     def add(self, entry: MemoryEntry) -> None: ...
     @abstractmethod
-    def search(self, memory_type, query, top_k) -> list[MemoryEntry]: ...
+    def search(self, memory_type, query, top_k,
+               min_similarity=None, scope=None) -> list[MemoryEntry]: ...
+    @abstractmethod
+    def get(self, entry_id) -> MemoryEntry | None: ...
+    @abstractmethod
+    def list_entries(self, memory_type=None) -> list[MemoryEntry]: ...
+    @abstractmethod
+    def update_metadata(self, entry_id, **changes) -> None: ...
     @abstractmethod
     def set_profile(self, key, value) -> None: ...
-
-
-class JSONMemoryStore(MemoryStore):
-    """默认后端：JSON 文件 + n-gram 向量检索，零外部依赖"""
-    def add(self, entry):
-        # procedural/episodic → 追加 JSON 列表；profile → 键值对
-        ...
-    def search(self, memory_type, query, top_k):
-        # procedural → 关键词重叠；episodic → n-gram 余弦相似度
-        ...
 
 
 class MemoryManager:
     """高层 API — 会话级上下文（CLAUDE.md/摘要）+ 委托 store 管记忆条目"""
     def __init__(self, project_root=None, store: MemoryStore | None = None):
-        self._store = store or JSONMemoryStore(project_root / ".minicode" / "memories")
+        self._store = store or SQLiteMemoryStore(
+            project_root / ".minicode" / "memories.sqlite"
+        )
 ```
-
-> **工程决策**：原本计划用 ChromaDB 做情景记忆语义检索，但评估发现其默认 ONNX embedding 在 Windows 加载 onnxruntime 时崩溃（access violation）。改为自研纯 Python n-gram 哈希向量 + 余弦相似度——零外部模型、跨平台、保留"向量检索"架构。n-gram 是字面相似度（非语义），对代码领域够用（错误模式/文件路径/函数名都是字面重复）；语义检索是明确扩展点。
 
 ### 6.3 RecallMemory 工具
 
@@ -1584,7 +1616,7 @@ class SessionStore:
 | 工具数 | 55+ | 12 | 覆盖核心场景，超出范围的不做 |
 | Bash 安全 | tree-sitter AST + 23+ 检查 | 27 条正则 + 白名单 | tree-sitter 是独立项目级复杂度 |
 | Skill 加载 | 6 层来源 + 分区排序 | 3 层来源 + 全量索引 | 对 12 个工具不需要分区 |
-| 记忆系统 | CLAUDE.md + Hook + 压缩摘要 | CLAUDE.md + 压缩摘要 + n-gram 向量检索 | 自研 n-gram（ChromaDB 在 Windows 崩溃） |
+| 记忆系统 | CLAUDE.md + Hook + 压缩摘要 | 三类记忆 + 作用域 + 冲突状态 + BM25 | 先保证不注入临时/冲突事实，再考虑语义增强 |
 | 子 Agent 协作 | SendMessage + JSONL邮箱 + FSM | AgentTool 统一路由 | 单机不需要对等通信协议 |
 | 权限 | 7 层 + AST 分析 | 4 层 | 不需要 iOS/Android 沙箱、OS 级防护 |
 | Worktree 隔离 | Git worktree 并行 | 可选实现 | 写操作子 Agent 可隔离，默认关闭且不自动合并 |
@@ -1600,7 +1632,7 @@ class SessionStore:
    ⚠️ 本项目**没有埋点测过命中率**，不要报「从 45% 提到 85%」「提升 40%」这类数字；要讲就讲上面这个机制。
 
 3. **"记忆系统为什么不做自进化闭环？"**
-   → 模型参数冻结的情况下，真正的"学习"不可能。我们选择务实方案：CLAUDE.md（文件持久化）+ Autocompact 摘要（压缩存留）+ n-gram 向量检索（按需）。评估 ChromaDB 后发现其默认 ONNX embedding 在 Windows 崩溃，故自研纯 Python n-gram 哈希向量 + 余弦相似度。承认技术边界本身展示工程判断力。
+   → 模型参数冻结的情况下，真正的"学习"不可能。我们选择务实方案：CLAUDE.md（人工规则）+ Autocompact 摘要（会话存留）+ 作用域记忆（只有持久内容跨任务）+ BM25 召回（按需）。本轮进一步禁止临时任务日志污染后续会话，并在写时标记冲突；语义整理留到离线阶段。承认技术边界本身展示工程判断力。
 
 4. **"子 Agent 如何防止上下文污染？"**
    → 子 Agent 复用同一个 AgentLoop 但拥有独立 messages[]。执行完毕只返回结果摘要，不回传完整上下文。AgentTool 统一路由——模型只需要学会用"Agent"这个工具。

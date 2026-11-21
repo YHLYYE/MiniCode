@@ -2,10 +2,10 @@
 
 > Reference: Claude Code architecture (reverse-engineered from how-claude-code-works),
 > implemented in **~4,850 lines of pure Python** with **zero LangChain dependency**.
-> 323 tests (1 skipped), all passing.
+> 335 tests (1 skipped), all passing.
 
 A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill routing**,
-**3-tier Memory system**, **3-tier Context Compression with measurable benchmarks**,
+**scoped conflict-aware Memory**, **3-tier Context Compression with measurable benchmarks**,
 **persistent task graph**, **concurrent tool execution**, **multi-agent collaboration**,
 and **4-layer security**.
 
@@ -18,7 +18,7 @@ and **4-layer security**.
 | 1 | **While-true Agent Loop + 4 Recovery Paths** | Model is the sole decision-maker. Recoverable errors (tool failure / prompt-too-long / output-token limit / transient stream error) are retried inside the loop instead of surfacing to the user |
 | 2 | **Multi-model Adapter (litellm)** | One codebase supports 100+ providers (Claude/DeepSeek/OpenAI/Gemini). Switch model = change 1 config line |
 | 3 | **Skill Progressive Disclosure + 2-stage Routing** | Full skill instructions are stripped from the System Prompt (only a one-line index stays); the model loads one via the `Skill` tool and the result lands at the message tail. Every task also runs recall → rerank, and the top-k candidates are appended to the **end** of the dynamic section — so everything before them stays byte-identical and the prefix cache still hits. Cache hits are read back from the provider (prompt_tokens_details.cached_tokens / Anthropic cache_read_input_tokens), summed per turn and printed — the layout's benefit is measured, not asserted |
-| 4 | **3-tier Memory (procedural / episodic / profile)** | Pluggable `MemoryStore` backend, pure-Python n-gram vector search (no ChromaDB crash on Windows) |
+| 4 | **Scoped conflict-aware Memory** | Three types (procedural / episodic / profile), SQLite by default, persistent/current-task scopes, BM25 recall, write-time conflict state, read-time labels and verified outcome feedback |
 | 5 | **3-tier Context Compression** (+ tool-layer truncation) | Snip (70% usage) → Collapse (85%) → Autocompact (95%). **Snip 86% / Collapse 95% / Autocompact 99.95% compression ratio**. End-to-end Token cost **reduced 63.7%**. Single-result truncation happens in the tool path at >30K chars — a different trigger (one result's absolute size), so it is not counted as a tier |
 | 6 | **Multi-Agent (AgentTool)** | explore (read-only) / general (full) / team = **research → coding → testing pipeline**, each step fed the previous step's output. Roles are tool-scoped (research/testing cannot write files). Child agents get isolated contexts and return only summaries; their token/cost is drained back into the parent's budget so `--max-cost` actually covers them. Semaphore(5) cap |
 | 7 | **4-layer Security + Plan/Normal Dual Mode** | Rule filter (dangerous commands + path allowlist) → Tool self-check → AI risk classifier → Human confirmation. Every destructive tool (Bash / Write / Edit) reaches L3 — including the ones that discard uncommitted work (`git reset --hard`, `git checkout --`, `git branch -D`); whitelisted read-only Bash commands are the only thing that short-circuits. Every classifier failure path (no model / exception / out-of-vocabulary risk / unparseable JSON) resolves to HIGH, never a silent pass. Plan mode physically removes write tools |
@@ -202,6 +202,22 @@ containerized by this option.
 The default image is `alpine:3.20`. For a project requiring Python, pass an image
 that contains the required runtime, for example `--sandbox-image python:3.12-slim`.
 
+### Scoped memory
+
+Memory entries carry `scope`, provenance and conflict metadata. Automatic prompt
+injection reads only `persistent` entries; raw tool errors, ordinary file-operation
+events and task summaries are `current_task` and remain available through an explicit
+`RecallMemory` query.
+
+Writes are deterministic: repeated content updates the existing fingerprint; a new
+user correction can supersede an older rule; uncertain same-topic entries are retained
+and grouped as `conflicted`. Conflicted entries are labeled in the prompt and never
+rendered as unconditional instructions. Injected memory gets `success_count` or
+`failure_count` according to the final terminal outcome.
+
+This release deliberately does not perform model-based extraction, conditional
+reranking or semantic consolidation.
+
 ### Persistent task graph
 
 `TaskCreate`, `TaskUpdate` and `TaskList` give the model a durable plan in
@@ -230,7 +246,7 @@ has no claims, leases or background scheduler.
 
 ```bash
 python -m pytest tests/ -v
-# 323 collected: 322 passed, 1 skipped
+# 335 collected: 334 passed, 1 skipped
 ```
 
 ---
@@ -268,7 +284,7 @@ minicode/
 ├── skills/                     # Skill definitions (markdown)
 │   └── code_review.md          # Example skill
 │
-└── tests/                      # 323 tests
+└── tests/                      # 335 tests
 ```
 
 ---
@@ -278,7 +294,7 @@ minicode/
 | Decision | Rationale | Trade-off |
 |----------|-----------|-----------|
 | **No LangChain** | 4,850 lines > 50K framework; every line is traceable | No automatic integration with LangSmith |
-| **Pure-Python n-gram vector search** | ChromaDB's ONNX Runtime crashes on Windows access violation; code fields (paths, errors, function names) are mostly literal duplicates anyway | No true semantic search — FAISS at ~500ms/query would be a natural next step |
+| **Lexical BM25 memory recall** | Code fields (paths, errors, function names) are mostly literal; BM25 avoids request-time model cost and nondeterminism | No semantic recall — conditional reranking remains a measured extension |
 | **Rule-based Collapse/Autocompact summaries** | Context is already full when compression triggers — can't call LLM | Lower summary quality than LLM-generated |
 | **State machine is *inside* while-true** | Model is sole decision-maker, not a programmer-defined FSM | Can't predict which path the agent will take, harder to debug |
 | **AgentTool as Tool Use, not subprocess** | No cross-process coordination overhead; child agents get isolated `messages[]` | Parent-child coupling is tighter than MCP would allow |

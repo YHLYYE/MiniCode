@@ -1,6 +1,6 @@
 # MiniCode Memory Correctness Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Make persistent memory admission-safe, conflict-aware and driven by verified task outcomes without adding request-time model calls.
 
@@ -25,7 +25,7 @@
 - Modify: `capabilities/memory.py`
 - Test: `tests/test_memory_conflicts.py`
 
-- [ ] **Step 1: Write migration and round-trip tests**
+- [x] **Step 1: Write migration and round-trip tests**
 
 ```python
 import sqlite3
@@ -69,12 +69,12 @@ def test_memory_entry_metadata_round_trip():
     assert restored.failure_count == 1
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run: `python -m pytest tests/test_memory_conflicts.py -q`  
 Expected: FAIL because the new fields and migration columns are absent.
 
-- [ ] **Step 3: Extend `MemoryEntry`**
+- [x] **Step 3: Extend `MemoryEntry`**
 
 ```python
 @dataclass
@@ -93,7 +93,7 @@ class MemoryEntry:
 
 Also update `to_dict()`, `from_dict()`, and `MemoryEntry.make()` with safe defaults. Unknown persisted scope/source/evidence/status values normalize to `persistent / observed / observed / active`.
 
-- [ ] **Step 4: Make SQLite migration idempotent**
+- [x] **Step 4: Make SQLite migration idempotent**
 
 Extend `SQLiteMemoryStore._migrate()` with:
 
@@ -113,7 +113,7 @@ columns = (
 
 Update inserts/selects/load helpers so every operation includes the columns.
 
-- [ ] **Step 5: Run focused tests and commit**
+- [x] **Step 5: Run focused tests and commit**
 
 Run: `python -m pytest tests/test_memory_conflicts.py tests/test_memory.py -q`  
 Expected: PASS.
@@ -129,7 +129,7 @@ git commit -m "feat: add memory provenance and conflict schema"
 - Modify: `capabilities/memory.py`
 - Test: `tests/test_memory_conflicts.py`
 
-- [ ] **Step 1: Write scope and conflict tests**
+- [x] **Step 1: Write scope and conflict tests**
 
 ```python
 @pytest.mark.asyncio
@@ -176,12 +176,12 @@ async def test_uncertain_same_subject_entries_are_marked_conflicted(tmp_path):
     assert store.get(first.id).conflict_group == store.get(second.id).conflict_group
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run: `python -m pytest tests/test_memory_conflicts.py -q`  
 Expected: FAIL on absent scope filtering and conflict metadata.
 
-- [ ] **Step 3: Add validated write admission and relation detection**
+- [x] **Step 3: Add validated write admission and relation detection**
 
 In `MemoryManager._add()` validate:
 
@@ -215,7 +215,7 @@ else:
 
 Use `keyword_tokens` for deterministic overlap. Never call a model.
 
-- [ ] **Step 4: Add scope to search**
+- [x] **Step 4: Add scope to search**
 
 Update abstract and concrete store signatures:
 
@@ -226,7 +226,7 @@ def search(self, memory_type, query, top_k, min_similarity=None, scope=None):
 
 `scope=None` keeps all entries for manual retrieval; `scope="persistent"` filters before BM25.
 
-- [ ] **Step 5: Run focused tests and commit**
+- [x] **Step 5: Run focused tests and commit**
 
 Run: `python -m pytest tests/test_memory_conflicts.py tests/test_memory.py tests/test_memory_eval.py -q`  
 Expected: PASS.
@@ -243,7 +243,7 @@ git commit -m "feat: enforce memory scope and write-time conflicts"
 - Modify: `capabilities/memory.py`
 - Test: `tests/test_memory_conflicts.py`
 
-- [ ] **Step 1: Write injection and formatting tests**
+- [x] **Step 1: Write injection and formatting tests**
 
 ```python
 @pytest.mark.asyncio
@@ -277,12 +277,12 @@ def test_conflicted_memory_hint_is_labeled(tmp_path):
     assert "历史记录，仅供参考" in hint
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run: `python -m pytest tests/test_memory_conflicts.py -q`  
 Expected: FAIL because automatic search is unfiltered and formatting has no conflict label.
 
-- [ ] **Step 3: Filter automatic injection**
+- [x] **Step 3: Filter automatic injection**
 
 Change `main.py`:
 
@@ -297,7 +297,7 @@ hits = memory_manager.search_sync(
 
 The `RecallMemory` tool keeps `scope=None` as its default.
 
-- [ ] **Step 4: Label active/conflicted entries in `format_memory_hint`**
+- [x] **Step 4: Label active/conflicted entries in `format_memory_hint`**
 
 ```python
 conflict = " [存在冲突]" if entry.status == "conflicted" else ""
@@ -309,7 +309,7 @@ if any(e.status == "conflicted" for e in entries):
 
 Keep the 600-character cap; append the note only if it fits.
 
-- [ ] **Step 5: Run focused tests and commit**
+- [x] **Step 5: Run focused tests and commit**
 
 Run: `python -m pytest tests/test_memory_conflicts.py tests/test_wiring.py tests/test_memory_eval.py -q`  
 Expected: PASS.
@@ -327,7 +327,7 @@ git commit -m "feat: inject only persistent memory and label conflicts"
 - Test: `tests/test_memory.py`
 - Test: `tests/test_memory_conflicts.py`
 
-- [ ] **Step 1: Write outcome tests**
+- [x] **Step 1: Write outcome tests**
 
 ```python
 @pytest.mark.asyncio
@@ -348,12 +348,12 @@ async def test_terminal_failure_increments_failure_count(tmp_path):
     assert mm.search_sync("修复 NPE", top_k=1)[0].failure_count == 1
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run: `python -m pytest tests/test_memory_conflicts.py -q`  
 Expected: FAIL because only `adoption_count` is updated.
 
-- [ ] **Step 3: Update outcome settlement**
+- [x] **Step 3: Update outcome settlement**
 
 `MemoryManager.record_task_outcome()` should bump one of:
 
@@ -366,7 +366,7 @@ return changed
 
 Catch store errors in the caller so outcome accounting never changes task termination.
 
-- [ ] **Step 4: Pass explicit success from AgentLoop**
+- [x] **Step 4: Pass explicit success from AgentLoop**
 
 Change `_record_task_done`:
 
@@ -383,11 +383,11 @@ async def _record_task_done(self, note="", *, success: bool):
 
 Call sites use `success=False` for max tokens, empty response, verification failure and max turns; use `success=True` only for `COMPLETED`.
 
-- [ ] **Step 5: Ensure temporary event scopes**
+- [x] **Step 5: Ensure temporary event scopes**
 
 Use `scope="current_task"` for raw tool-error episodes, file-operation episodes and task-completion episodes. Keep user corrections and distilled error-to-fix procedural memories persistent.
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 Run: `python -m pytest tests/test_memory.py tests/test_memory_conflicts.py tests/test_agent_loop.py -q`  
 Expected: PASS.
@@ -406,7 +406,7 @@ git commit -m "feat: settle memory feedback from terminal outcomes"
 - Modify: `ROADMAP.md`
 - Test: `tests/test_memory_conflicts.py`
 
-- [ ] **Step 1: Write ranking test**
+- [x] **Step 1: Write ranking test**
 
 ```python
 def test_successful_memory_outranks_failed_peer(tmp_path):
@@ -419,12 +419,12 @@ def test_successful_memory_outranks_failed_peer(tmp_path):
     assert hits[0]["content"] == "pytest pre commit check"
 ```
 
-- [ ] **Step 2: Run test and verify it fails**
+- [x] **Step 2: Run test and verify it fails**
 
 Run: `python -m pytest tests/test_memory_conflicts.py::test_successful_memory_outranks_failed_peer -q`  
 Expected: FAIL because ranking still uses `adoption_count`.
 
-- [ ] **Step 3: Update ranking bonus**
+- [x] **Step 3: Update ranking bonus**
 
 Use:
 
@@ -436,12 +436,12 @@ bonus *= max(0.5, 1.0 + 0.05 * success - 0.03 * failure)
 
 Keep all BM25 score and strict-evidence behavior unchanged.
 
-- [ ] **Step 4: Run memory tests**
+- [x] **Step 4: Run memory tests**
 
 Run: `python -m pytest tests/test_memory.py tests/test_memory_eval.py tests/test_memory_conflicts.py -q`  
 Expected: PASS with existing recall floors unchanged.
 
-- [ ] **Step 5: Update documentation**
+- [x] **Step 5: Update documentation**
 
 Document:
 
@@ -453,7 +453,7 @@ Document:
 
 Update test counts only after the full suite passes.
 
-- [ ] **Step 6: Run all gates**
+- [x] **Step 6: Run all gates**
 
 ```bash
 python -m pytest -q
@@ -465,7 +465,7 @@ git diff --check
 
 Expected: every command exits 0 and documentation counts match pytest.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add capabilities/memory.py README.md DESIGN.md ROADMAP.md tests/test_memory_conflicts.py
@@ -474,13 +474,13 @@ git commit -m "docs: document scoped conflict-aware memory"
 
 ## Final Acceptance Checklist
 
-- [ ] Old SQLite data migrates without loss.
-- [ ] Automatic injection uses only persistent entries.
-- [ ] Temporary entries remain manually recallable.
-- [ ] User corrections supersede older rules.
-- [ ] Uncertain same-topic entries are marked conflicted.
-- [ ] Conflict labels appear in memory hints.
-- [ ] Success/failure counters use explicit terminal outcomes.
-- [ ] Outcome accounting failure cannot crash a task.
-- [ ] BM25 and recall quality floors remain green.
-- [ ] Full tests and documentation gates pass.
+- [x] Old SQLite data migrates without loss.
+- [x] Automatic injection uses only persistent entries.
+- [x] Temporary entries remain manually recallable.
+- [x] User corrections supersede older rules.
+- [x] Uncertain same-topic entries are marked conflicted.
+- [x] Conflict labels appear in memory hints.
+- [x] Success/failure counters use explicit terminal outcomes.
+- [x] Outcome accounting failure cannot crash a task.
+- [x] BM25 and recall quality floors remain green.
+- [x] Full tests and documentation gates pass.

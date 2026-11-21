@@ -21,10 +21,10 @@ The order below is "what I would do next and what it would cost", not a wish lis
 | Worktree isolation | Optional per-task worktrees for write-capable sub-agents; in-worktree verification before commit; persisted lifecycle index; List/Apply/Remove tools; verified branches can be cherry-picked only after approval and are never auto-merged | `capabilities/worktree.py`, `capabilities/multi_agent.py` |
 | Docker Bash sandbox | Optional Docker-isolated Bash with read-only root, workspace-only write mount, no network by default, resource limits, timeout cleanup | `capabilities/docker_sandbox.py` |
 | Skills | Progressive disclosure (full text stays out of the system prompt) + two-stage routing; top-k appended last so the prefix stays byte-identical | `capabilities/skill.py` |
-| Memory | Three types (procedural / episodic / profile), SQLite by default, pluggable store | `capabilities/memory.py` |
+| Memory | Three types (procedural / episodic / profile), persistent/current-task scope, BM25 recall, write-time conflict state, read-time labels and verified outcome counters | `capabilities/memory.py` |
 | Security | 4 layers; every classifier failure path resolves to HIGH; Plan/Normal dual mode physically removes write tools | `capabilities/security.py` |
 | Cost | Per-model pricing via litellm, `--max-cost` circuit breaker, sub-agent usage rolled up into the parent ledger | `core/model_adapter.py`, `core/state.py` |
-| Quality gates | 323 tests, pyflakes gate, `verify_claims.py`, a 4-case offline verification/Worktree behavior benchmark, and Docker sandbox tests | `tests/`, `benchmarks/` |
+| Quality gates | 335 tests, pyflakes gate, `verify_claims.py`, a 4-case offline verification/Worktree behavior benchmark, and Docker sandbox tests | `tests/`, `benchmarks/` |
 
 ---
 
@@ -36,7 +36,7 @@ one that is hidden is a demo.
 | Boundary | Why it is not done | What closing it would cost |
 |---|---|---|
 | **No MCP support** | Tools are built in. MCP is an integration surface, not a core loop feature — adding it before the loop was stable would have hidden loop bugs behind protocol bugs | ~3 days (see *Next*) |
-| **Memory retrieval is literal n-gram, not semantic** | ChromaDB's default ONNX embedding crashes on Windows (onnxruntime access violation), and code-flavoured memory (paths, error strings, function names) is mostly literal repetition anyway | ~0.5 day behind the `MemoryStore` interface, plus an embedding dependency |
+| **Memory retrieval is lexical BM25, not semantic** | BM25 performs well on code-flavoured memory (paths, error strings, identifiers) without request-time model calls; semantic extraction and reranking remain separate extensions | ~1 day behind the `MemoryStore` interface after a measured A/B, plus an embedding or model dependency |
 | **No process-level sandbox** | Application-level confinement only: path allowlist, dangerous-command rules, Plan mode. A real sandbox means containers or seccomp | 1 week+ to be trustworthy; a fake one is worse than none |
 | **Task graph is single-process** | Tasks, dependencies and atomic writes are implemented, but there are no claims, leases or a multi-process scheduler | Add a transactional database and ownership protocol only when a real multi-worker deployment needs it |
 | **No progress detection** | The only brakes are `max_turns` and `max_cost`. Detecting "the model is looping without progress" requires defining *progress* — which takes the decision away from the model, contradicting the loop's core principle | 2–3 days, and it changes the design philosophy |
@@ -62,14 +62,14 @@ remote tools are untrusted, so they should default to the L3/L4 path.
 
 ### 2. Semantic memory backend — ~0.5 day
 
-**Why**: n-gram retrieves by surface overlap; "how did I fix an NPE last time"
+**Why**: BM25 retrieves by surface overlap; "how did I fix an NPE last time"
 should match across wording.
 
 **Scope**: one more `MemoryStore` implementation (embeddings + cosine), selected by
 config. The interface already exists, so the loop does not change.
 
 **Cost**: a new dependency plus ~500ms/query. Should ship with a measured
-comparison against the n-gram baseline, otherwise it is a downgrade with better
+comparison against the BM25 baseline, otherwise it is a downgrade with better
 branding.
 
 ### 3. Readable compaction (replace `[[snip:KEY]]` with a real lookup) — ~1 day
