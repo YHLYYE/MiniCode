@@ -1,0 +1,36 @@
+{
+  "summary": {
+    "mode": "scripted-offline",
+    "cases_total": 4,
+    "cases_passed": 4,
+    "false_completion_blocked": 1,
+    "verified_commits": 1,
+    "main_workspace_mutations_before_apply": 0,
+    "conflict_rollbacks": 1,
+    "auto_merges": 0
+  },
+  "cases": [
+    {
+      "case_id": "verified_and_apply",
+      "passed": true,
+      "verified_commits": 1,
+      "main_workspace_mutations_before_apply": 0,
+      "explicit_apply_count": 1
+    },
+    {
+      "case_id": "failed_verification_preserved",
+      "passed": true,
+      "preserved_uncommitted_worktree": 1
+    },
+    {
+      "case_id": "parent_completion_blocked",
+      "passed": true,
+      "false_completion_blocked": 1
+    },
+    {
+      "case_id": "conflict_rollback",
+      "passed": true,
+      "conflict_rollbacks": 1
+    }
+  ]
+}
