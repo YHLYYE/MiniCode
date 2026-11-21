@@ -135,7 +135,7 @@ def _run_verified_and_apply(root: Path) -> dict:
         "verified_commits": int(bool(entry["commit"])),
         "main_workspace_mutations_before_apply": mutations_before_apply,
         "explicit_apply_count": int(bool(applied_commit)),
-        "auto_merges": 0,
+        "unexpected_main_workspace_mutations": mutations_before_apply,
     }
 
 
@@ -151,6 +151,7 @@ def _run_failed_verification(root: Path) -> dict:
     )
     result = asyncio.run(tool.execute("bad change", agent_type="general"))
     entry = manager.list_entries()[0]
+    unexpected = int((repo / "feature.txt").exists())
     return {
         "case_id": "failed_verification_preserved",
         "passed": (
@@ -160,8 +161,8 @@ def _run_failed_verification(root: Path) -> dict:
             and tool.completion_blocker() is not None
         ),
         "preserved_uncommitted_worktree": int(entry["status"] == "verify_failed"),
-        "main_workspace_mutations_before_apply": 0,
-        "auto_merges": 0,
+        "main_workspace_mutations_before_apply": unexpected,
+        "unexpected_main_workspace_mutations": unexpected,
     }
 
 
@@ -215,14 +216,15 @@ def _run_parent_completion_gate(root: Path) -> dict:
 
     events = asyncio.run(collect())
     done = next(event for event in events if isinstance(event, DoneEvent))
+    unexpected = int((repo / "feature.txt").exists())
     return {
         "case_id": "parent_completion_blocked",
         "passed": done.state.termination_reason == TerminationReason.VERIFY_FAILED,
         "false_completion_blocked": int(
             done.state.termination_reason == TerminationReason.VERIFY_FAILED
         ),
-        "main_workspace_mutations_before_apply": 0,
-        "auto_merges": 0,
+        "main_workspace_mutations_before_apply": unexpected,
+        "unexpected_main_workspace_mutations": unexpected,
     }
 
 
@@ -256,7 +258,7 @@ def _run_conflict_rollback(root: Path) -> dict:
         "passed": rollback_ok,
         "rollback_ok": int(rollback_ok),
         "main_workspace_mutations_before_apply": 0,
-        "auto_merges": 0 if rollback_ok else 1,
+        "unexpected_main_workspace_mutations": 0 if rollback_ok else 1,
     }
 
 
@@ -287,7 +289,10 @@ def run_benchmark(output_dir: Path) -> dict:
         "conflict_rollbacks": sum(
             case.get("rollback_ok", 0) for case in cases
         ),
-        "auto_merges": sum(case.get("auto_merges", 0) for case in cases),
+        "auto_merges": sum(
+            case.get("unexpected_main_workspace_mutations", 0)
+            for case in cases
+        ),
     }
     report = {"summary": summary, "cases": cases}
     (output_dir / "worktree_verification_bench.json").write_text(
