@@ -35,9 +35,9 @@ class EditTool(Tool):
     is_concurrency_safe = False
     is_destructive = True
 
-    def __init__(self, backend=None):
+    def __init__(self, backend=None, workspace_root=None):
         super().__init__()
-        self._backend = backend or LocalFilesystemBackend()
+        self._backend = backend or LocalFilesystemBackend(workspace_root)
 
     async def execute(self, file_path: str, old_string: str,
                       new_string: str) -> str:

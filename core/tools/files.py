@@ -22,9 +22,10 @@ class ReadTool(Tool):
     is_readonly = True
     is_concurrency_safe = True
 
-    def __init__(self, backend: FilesystemBackend | None = None):
+    def __init__(self, backend: FilesystemBackend | None = None,
+                 workspace_root=None):
         super().__init__()
-        self._backend = backend or LocalFilesystemBackend()
+        self._backend = backend or LocalFilesystemBackend(workspace_root)
 
     async def execute(self, file_path: str) -> str:
         if not self._backend.exists(file_path):
@@ -66,9 +67,10 @@ class WriteTool(Tool):
     is_concurrency_safe = False
     is_destructive = True
 
-    def __init__(self, backend: FilesystemBackend | None = None):
+    def __init__(self, backend: FilesystemBackend | None = None,
+                 workspace_root=None):
         super().__init__()
-        self._backend = backend or LocalFilesystemBackend()
+        self._backend = backend or LocalFilesystemBackend(workspace_root)
 
     async def execute(self, file_path: str, content: str) -> str:
         existed = self._backend.exists(file_path)

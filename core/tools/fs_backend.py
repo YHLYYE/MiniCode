@@ -32,16 +32,34 @@ class FilesystemBackend(ABC):
 class LocalFilesystemBackend(FilesystemBackend):
     """Default backend — the local filesystem (zero dependencies)."""
 
+    def __init__(self, root: Path | None = None):
+        self.root = root.resolve() if root else None
+
+    def resolve(self, path: str) -> Path:
+        candidate = Path(path)
+        if self.root is not None and not candidate.is_absolute():
+            candidate = self.root / candidate
+        candidate = candidate.resolve()
+        if self.root is not None and not candidate.is_relative_to(self.root):
+            raise PermissionError(f"path outside workspace: {path}")
+        return candidate
+
     def read(self, path: str) -> str:
-        return Path(path).read_text(encoding="utf-8", errors="replace")
+        return self.resolve(path).read_text(encoding="utf-8", errors="replace")
 
     def write(self, path: str, content: str) -> None:
-        p = Path(path)
+        p = self.resolve(path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content, encoding="utf-8")
+        p.write_text(content, encoding="utf-8", newline="\n")
 
     def exists(self, path: str) -> bool:
-        return Path(path).exists()
+        try:
+            return self.resolve(path).exists()
+        except PermissionError:
+            return False
 
     def is_dir(self, path: str) -> bool:
-        return Path(path).is_dir()
+        try:
+            return self.resolve(path).is_dir()
+        except PermissionError:
+            return False

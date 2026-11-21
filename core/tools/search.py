@@ -44,12 +44,29 @@ class GrepTool(Tool):
     is_readonly = True
     is_concurrency_safe = True
 
+    def __init__(self, workspace_root: Path | None = None):
+        super().__init__()
+        self._workspace_root = workspace_root.resolve() if workspace_root else None
+
+    def _resolve_root(self, path: str) -> Path:
+        base = self._workspace_root or Path.cwd().resolve()
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            candidate = base / candidate
+        candidate = candidate.resolve()
+        if self._workspace_root and not candidate.is_relative_to(self._workspace_root):
+            raise PermissionError(f"path outside workspace: {path}")
+        return candidate
+
     async def execute(self, pattern: str, path: str = ".") -> str:
         # 文件遍历 + 读取是阻塞 I/O → 丢线程池，让并发搜索真正并行
         return await asyncio.to_thread(self._search, pattern, path)
 
     def _search(self, pattern: str, path: str) -> str:
-        root = Path(path)
+        try:
+            root = self._resolve_root(path)
+        except PermissionError as exc:
+            return f"Error: {exc}"
         if not root.exists():
             return f"Error: path not found: {path}"
         try:
@@ -103,11 +120,28 @@ class GlobTool(Tool):
     is_readonly = True
     is_concurrency_safe = True
 
+    def __init__(self, workspace_root: Path | None = None):
+        super().__init__()
+        self._workspace_root = workspace_root.resolve() if workspace_root else None
+
+    def _resolve_root(self, path: str) -> Path:
+        base = self._workspace_root or Path.cwd().resolve()
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            candidate = base / candidate
+        candidate = candidate.resolve()
+        if self._workspace_root and not candidate.is_relative_to(self._workspace_root):
+            raise PermissionError(f"path outside workspace: {path}")
+        return candidate
+
     async def execute(self, pattern: str, path: str = ".") -> str:
         return await asyncio.to_thread(self._glob, pattern, path)
 
     def _glob(self, pattern: str, path: str) -> str:
-        root = Path(path)
+        try:
+            root = self._resolve_root(path)
+        except PermissionError as exc:
+            return f"Error: {exc}"
         if not root.exists():
             return f"Error: path not found: {path}"
 

@@ -41,6 +41,12 @@ class BashTool(Tool):
     DANGEROUS_PATTERNS = DANGEROUS_COMMAND_PATTERNS
     MAX_EXECUTION_TIME = 60
 
+    def __init__(self, workspace_root: Path | None = None):
+        super().__init__()
+        self._workspace_root = (
+            workspace_root.resolve() if workspace_root else Path.cwd().resolve()
+        )
+
     async def execute(self, command: str, timeout: int = 30) -> str:
         # L1: Dangerous pattern detection
         for pattern, reason in self.DANGEROUS_PATTERNS:
@@ -53,7 +59,7 @@ class BashTool(Tool):
         timeout = min(timeout, self.MAX_EXECUTION_TIME)
 
         # L3: Working directory confinement
-        cwd = Path.cwd()
+        cwd = self._workspace_root
 
         proc = None
         try:
