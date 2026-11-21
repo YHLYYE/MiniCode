@@ -36,6 +36,7 @@ from capabilities.memory import (MEMORY_HINT_TOP_K, MEMORY_INJECT_MIN_SIMILARITY
                                  MemoryManager, format_memory_hint)
 from capabilities.multi_agent import AgentTool, compose_subagent_prompt
 from capabilities.compression import summarize_messages
+from capabilities.verification import CommandVerifier
 from capabilities.security import resolve_tools_for_mode, ExecutionMode
 from prompt.system_prompt import build_system_prompt
 from session_store import SessionStore
@@ -139,8 +140,18 @@ def _build_tools(mode: str, config: Config, inject_memory: bool = True):
 @click.option("--list-sessions", is_flag=True, help="List saved sessions and exit")
 @click.option("--no-memory-inject", is_flag=True,
               help="不把历史记忆自动注入系统提示词（记忆仍可手动 RecallMemory）")
+@click.option("--verify-command", default=None,
+              help="任务结束前执行的客观验收命令")
+@click.option("--verify-timeout", default=120, type=int,
+              help="验收命令超时秒数")
+@click.option("--verify-retries", default=2, type=int,
+              help="验收失败后最多回灌修复的轮数")
+@click.option("--isolate-subagents", is_flag=True,
+              help="让可写子 Agent 在独立 Git Worktree 中执行")
 def main(task: str | None, mode: str, max_turns: int, max_cost: float,
-         resume: str | None, list_sessions: bool, no_memory_inject: bool):
+         resume: str | None, list_sessions: bool, no_memory_inject: bool,
+         verify_command: str | None, verify_timeout: int, verify_retries: int,
+         isolate_subagents: bool):
     """MiniCode — AI Coding Agent
 
     TASK: (可选) 单次任务。不传则进入交互式 REPL。
@@ -148,6 +159,13 @@ def main(task: str | None, mode: str, max_turns: int, max_cost: float,
     config = Config.from_env()
     config.max_turns = max_turns
     config.max_cost_usd = max_cost
+    verifier = None
+    if verify_command:
+        verifier = CommandVerifier(
+            verify_command,
+            cwd=Path.cwd(),
+            timeout_seconds=verify_timeout,
+        )
 
     store = SessionStore()
 
@@ -184,7 +202,8 @@ def main(task: str | None, mode: str, max_turns: int, max_cost: float,
         # 单次任务模式
         _print_header(config, mode, max_turns, max_cost)
         loop = _make_loop(config, tools, system_prompt, max_turns, max_cost,
-                          memory_manager, system_prompt_factory)
+                          memory_manager, system_prompt_factory,
+                          verifier=verifier, verify_retries=verify_retries)
         if resume_state:
             loop._state = resume_state
         print(f"> {task}\n")
@@ -195,11 +214,14 @@ def main(task: str | None, mode: str, max_turns: int, max_cost: float,
         # 交互式 REPL 模式
         asyncio.run(_interactive_repl(config, tools, system_prompt, exec_mode,
                                       store, resume_state, memory_manager,
-                                      system_prompt_factory))
+                                      system_prompt_factory,
+                                      verifier=verifier,
+                                      verify_retries=verify_retries))
 
 
 def _make_loop(config, tools, system_prompt, max_turns, max_cost,
-               memory_manager=None, system_prompt_factory=None):
+               memory_manager=None, system_prompt_factory=None,
+               verifier=None, verify_retries=2):
     return AgentLoop(
         tools=tools,
         model_adapter=ModelAdapter(config.model),
@@ -208,6 +230,8 @@ def _make_loop(config, tools, system_prompt, max_turns, max_cost,
         max_cost_usd=max_cost,
         memory_manager=memory_manager,
         system_prompt_factory=system_prompt_factory,
+        verifier=verifier,
+        verify_retries=verify_retries,
     )
 
 
@@ -227,6 +251,7 @@ _RECOVERY_LABELS = {
     ContinueReason.EMPTY_RESPONSE_RETRY: "模型返回空响应",
     ContinueReason.MAX_OUTPUT_TOKENS_UPGRADE: "输出被截断（升级上限）",
     ContinueReason.MAX_OUTPUT_TOKENS_RECOVERY: "输出被截断（续写提示）",
+    ContinueReason.VERIFICATION_RETRY: "外部验收失败",
 }
 
 
@@ -252,7 +277,8 @@ def _persist_session(loop, store: SessionStore, memory_manager):
 async def _interactive_repl(config, tools, system_prompt, exec_mode,
                             store: SessionStore | None = None,
                             resume_state=None, memory_manager=None,
-                            system_prompt_factory=None):
+                            system_prompt_factory=None, verifier=None,
+                            verify_retries: int = 2):
     """交互式 REPL — 启动一次，连续对话，上下文持续。"""
     print("=" * 60)
     print("MiniCode 交互模式")
@@ -263,7 +289,8 @@ async def _interactive_repl(config, tools, system_prompt, exec_mode,
 
     loop = _make_loop(config, tools, system_prompt, config.max_turns,
                       config.max_cost_usd, memory_manager,
-                      system_prompt_factory)
+                      system_prompt_factory, verifier,
+                      verify_retries)
     if resume_state:
         loop._state = resume_state
 
@@ -286,7 +313,8 @@ async def _interactive_repl(config, tools, system_prompt, exec_mode,
         if cmd in ("/clear", "/reset"):
             loop = _make_loop(config, tools, system_prompt,
                               config.max_turns, config.max_cost_usd,
-                              memory_manager, system_prompt_factory)
+                              memory_manager, system_prompt_factory, verifier,
+                              verify_retries)
             print("[已清空对话历史]")
             continue
         if cmd in ("/save", "/s"):
@@ -344,6 +372,8 @@ async def _run_task(loop: AgentLoop, task: str):
                     f"{s.total_tokens:,} tokens, "
                     f"${s.total_cost_usd:.4f}{cache}"
                 )
+                if s.termination_reason is not None:
+                    print(f"termination: {s.termination_reason.value}")
             elif isinstance(event, RecoveryNotice):
                 label = _RECOVERY_LABELS.get(event.reason, event.reason.value
                                              if event.reason else "未知")
