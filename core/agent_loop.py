@@ -42,6 +42,8 @@ _TRANSIENT_STATUS_RE = re.compile(
 # ── Empty response guard ──
 _EMPTY_RESPONSE_MAX_RETRIES = 2  # 模型返回空响应时，先提醒它两次再终止
 
+TASK_GRAPH_TOOLS = {"TaskCreate", "TaskUpdate", "TaskList"}
+
 
 def truncate_result(result: str) -> str:
     """截断超长工具结果，并在提示里给出真实省略字符数。
@@ -583,6 +585,8 @@ class AgentLoop:
                         self._note_possible_fix(tool_name, file_path, result)
                 # TodoWrite 成功 → 记住这份清单（Snip 跳过它、Autocompact 回灌它）
                 if tool_name == "TodoWrite" and result.startswith("## Task List"):
+                    self._compressor.record_task_list(result)
+                elif tool_name in TASK_GRAPH_TOOLS and "## Task Graph" in result:
                     self._compressor.record_task_list(result)
 
                 self._state = self._state.add_message(

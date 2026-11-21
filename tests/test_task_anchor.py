@@ -274,3 +274,37 @@ async def test_collapse_does_not_duplicate_task_list_already_in_tail():
     out = await compressor._collapse(LoopState(messages=msgs))
     hits = sum(1 for m in out.messages if m.content == task_list)
     assert hits == 1, f"清单被重复回灌了 {hits} 次"
+
+
+@pytest.mark.asyncio
+async def test_task_graph_tool_result_becomes_compression_anchor(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    from capabilities.task_graph import TaskCreateTool, TaskGraphStore
+
+    plan = [
+        [
+            _Chunk(
+                type="tool_use_start",
+                name="TaskCreate",
+                input={"subject": "实现压缩锚点"},
+                tool_call_id="graph-1",
+            ),
+            _Chunk(type="message_stop", stop_reason="tool_use", usage=_Usage()),
+        ],
+        [
+            _Chunk(type="text_delta", text="done"),
+            _Chunk(type="message_stop", stop_reason="end_turn", usage=_Usage()),
+        ],
+    ]
+    loop = AgentLoop(
+        tools=[TaskCreateTool(TaskGraphStore(tmp_path))],
+        model_adapter=_MockModel(plan),
+        system_prompt="test",
+    )
+
+    _ = [event async for event in loop.run("go")]
+
+    assert "实现压缩锚点" in loop._compressor._task_list
+    assert "## Task Graph" in loop._compressor._task_list
