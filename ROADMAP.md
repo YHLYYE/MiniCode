@@ -14,7 +14,8 @@ The order below is "what I would do next and what it would cost", not a wish lis
 |---|---|---|
 | Agent Loop | `while-true` loop, 4 recovery paths (tool error / prompt too long / output truncated / network transient), each with its own state marker | `core/agent_loop.py` |
 | Context | 3-tier compression: Snip → Collapse → Autocompact, plus per-tool-result truncation. End-to-end input tokens −63.7% in the benchmark | `capabilities/compression.py` |
-| Tools | 12 built-ins, grouped by `check_concurrency_safe()`; blocking I/O pushed to threads | `core/tools/` |
+| Tools | 15 built-ins plus `Agent`, grouped by `check_concurrency_safe()`; blocking I/O pushed to threads | `core/tools/`, `capabilities/task_graph.py` |
+| Persistent task graph | Model-operated tasks with dependencies, deterministic state transitions, project JSON persistence, prompt recovery and compression anchoring | `capabilities/task_graph.py` |
 | Multi-Agent | `AgentTool` routing: `explore` / `general` / `team` (research → code → verify pipeline) | `capabilities/multi_agent.py` |
 | Verification | Optional external command gate; failed evidence is fed back before completion | `capabilities/verification.py`, `core/agent_loop.py` |
 | Worktree isolation | Optional per-task worktrees for write-capable sub-agents; in-worktree verification before commit; persisted lifecycle index; List/Apply/Remove tools; verified branches can be cherry-picked only after approval and are never auto-merged | `capabilities/worktree.py`, `capabilities/multi_agent.py` |
@@ -23,7 +24,7 @@ The order below is "what I would do next and what it would cost", not a wish lis
 | Memory | Three types (procedural / episodic / profile), SQLite by default, pluggable store | `capabilities/memory.py` |
 | Security | 4 layers; every classifier failure path resolves to HIGH; Plan/Normal dual mode physically removes write tools | `capabilities/security.py` |
 | Cost | Per-model pricing via litellm, `--max-cost` circuit breaker, sub-agent usage rolled up into the parent ledger | `core/model_adapter.py`, `core/state.py` |
-| Quality gates | 303 tests, pyflakes gate, `verify_claims.py`, a 4-case offline verification/Worktree behavior benchmark, and Docker sandbox tests | `tests/`, `benchmarks/` |
+| Quality gates | 321 tests, pyflakes gate, `verify_claims.py`, a 4-case offline verification/Worktree behavior benchmark, and Docker sandbox tests | `tests/`, `benchmarks/` |
 
 ---
 
@@ -37,6 +38,7 @@ one that is hidden is a demo.
 | **No MCP support** | Tools are built in. MCP is an integration surface, not a core loop feature — adding it before the loop was stable would have hidden loop bugs behind protocol bugs | ~3 days (see *Next*) |
 | **Memory retrieval is literal n-gram, not semantic** | ChromaDB's default ONNX embedding crashes on Windows (onnxruntime access violation), and code-flavoured memory (paths, error strings, function names) is mostly literal repetition anyway | ~0.5 day behind the `MemoryStore` interface, plus an embedding dependency |
 | **No process-level sandbox** | Application-level confinement only: path allowlist, dangerous-command rules, Plan mode. A real sandbox means containers or seccomp | 1 week+ to be trustworthy; a fake one is worse than none |
+| **Task graph is single-process** | Tasks, dependencies and atomic writes are implemented, but there are no claims, leases or a multi-process scheduler | Add a transactional database and ownership protocol only when a real multi-worker deployment needs it |
 | **No progress detection** | The only brakes are `max_turns` and `max_cost`. Detecting "the model is looping without progress" requires defining *progress* — which takes the decision away from the model, contradicting the loop's core principle | 2–3 days, and it changes the design philosophy |
 | **`[[snip:KEY]]` cache is write-only** | Snip is **lossy by design**. Nothing reads the placeholder back; the task list is explicitly excluded so it survives compression | ~1 day to make it readable on demand |
 | **No online/deployed data** | Every number in this repo is an offline benchmark. No users, no QPS, no production latency | Not obtainable for a personal project — stated rather than faked |

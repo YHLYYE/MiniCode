@@ -45,7 +45,7 @@
 │  Agent Loop — while-true + 4 恢复路径      │
 │  工具执行 — 内联 run_one + 分组并发        │
 │  ModelAdapter — litellm 多模型适配         │
-│  Tool Registry — 12 个工具                 │
+│  Tool Registry — 15 个工具                 │
 └────────────────────────────────────────────┘
 ```
 
@@ -65,6 +65,7 @@ Desktop/minicode/
 │       ├── web.py             # WebFetch, WebSearch
 │       └── task.py            # TodoWrite
 ├── capabilities/
+│   ├── task_graph.py          # 持久任务图 + 三个模型工具
 │   ├── skill.py               # Skill 系统（渐进式披露 + 二阶段路由）
 │   ├── tokenize.py            # 双语关键词分词（skill 路由与记忆检索共用，
 │   │                          #   英文按词 + 中文字符 bigram —— 中文必须切，
@@ -84,7 +85,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 303 个测试
+└── tests/                     # 321 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -445,9 +446,9 @@ class Tool(ABC):
         }
 ```
 
-### 3.2 13 个内置工具（12 件基础工具 + Agent）
+### 3.2 16 个内置工具（15 件基础工具 + Agent）
 
-> 子 Agent 拿到的工具表就是下面这 12 件基础工具（再按角色裁剪），**不含 Agent** ——
+> 子 Agent 拿到的工具表就是下面这 15 件基础工具（再按角色裁剪），**不含 Agent** ——
 > 所以它无法再开子 Agent，嵌套天然有界（见 `main.py:86-92`）。
 
 | 工具 | 只读 | 并发安全 | 破坏性 | 职责 |
@@ -460,7 +461,10 @@ class Tool(ABC):
 | Glob | ✅ | ✅ | - | 文件名模式搜索 |
 | WebFetch | ✅ | ✅ | - | 获取网页内容（HTML→text） |
 | WebSearch | ✅ | ✅ | - | Tavily 搜索 |
-| TodoWrite | - | - | - | 任务列表管理 |
+| TodoWrite | - | - | - | 会话内短任务列表 |
+| TaskCreate | - | - | - | 创建持久任务并声明已有任务依赖 |
+| TaskUpdate | - | - | - | 按状态机开始或完成任务 |
+| TaskList | ✓ | ✓ | - | 查看任务、阻塞状态和计数 |
 | Skill | ✅ | ✅ | - | 加载 Skill 指令 |
 | RecallMemory | ✅ | ✅ | - | 搜索历史记忆 |
 | Remember | - | ✅ | - | 写入长期记忆 |
@@ -959,6 +963,42 @@ class RecallMemoryTool(Tool):
             f"[{e.type}] {e.content}\nFiles: {', '.join(e.file_paths)}"
             for e in entries)
 ```
+
+### 6.4 持久任务图
+
+`TodoWrite` 是会话内的轻量清单；需要跨回合恢复、表达依赖关系时，使用
+`TaskCreate / TaskUpdate / TaskList`。任务保存在 `.minicode/tasks.json`，不进入
+用户代码目录。
+
+**状态机**
+
+```text
+pending -> in_progress -> completed
+```
+
+- 新任务只能从 `pending` 开始；
+- 只有全部 `blocked_by` 任务完成，`pending` 才能进入 `in_progress`；
+- 不允许跳到 `completed`，也不允许完成后回退；
+- 同一状态的重复更新是幂等操作；
+- 依赖只能引用创建时已存在的任务，因此图在构造上无环。
+
+**持久化**
+
+每次写入先生成同目录临时文件，再用 `os.replace` 原子替换。当前实现用进程内
+`RLock` 串行化读写，只支持单个 MiniCode 进程；任务认领、租约和多进程调度是
+明确未实现的边界。JSON 损坏、字段缺失或依赖悬空时 fail-closed，不会重建空图
+覆盖原文件。
+
+**上下文恢复**
+
+系统提示词只注入未完成任务，已完成任务需要显式调用
+`TaskList(include_completed=True)`。`TaskCreate / TaskUpdate / TaskList` 的规范
+快照会登记到现有压缩锚点，因此 Snip、Collapse 和 Autocompact 都不会把当前计划
+丢掉。文件损坏时，启动流程打印一次警告，并在动态提示词中写入
+`Task Graph Unavailable`，而任务工具继续拒绝读写。
+
+Planning 模式只暴露 `TaskCreate` 和 `TaskList`，不暴露 `TaskUpdate`：可以写计划、
+看依赖，但不能在未执行代码时谎报任务状态。
 
 ---
 

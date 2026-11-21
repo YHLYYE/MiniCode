@@ -2,11 +2,12 @@
 
 > Reference: Claude Code architecture (reverse-engineered from how-claude-code-works),
 > implemented in **~4,850 lines of pure Python** with **zero LangChain dependency**.
-> 303 unit tests (1 skipped), all passing.
+> 321 tests (1 skipped), all passing.
 
 A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill routing**,
 **3-tier Memory system**, **3-tier Context Compression with measurable benchmarks**,
-**concurrent tool execution**, **multi-agent collaboration**, and **4-layer security**.
+**persistent task graph**, **concurrent tool execution**, **multi-agent collaboration**,
+and **4-layer security**.
 
 ---
 
@@ -22,6 +23,7 @@ A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill 
 | 6 | **Multi-Agent (AgentTool)** | explore (read-only) / general (full) / team = **research → coding → testing pipeline**, each step fed the previous step's output. Roles are tool-scoped (research/testing cannot write files). Child agents get isolated contexts and return only summaries; their token/cost is drained back into the parent's budget so `--max-cost` actually covers them. Semaphore(5) cap |
 | 7 | **4-layer Security + Plan/Normal Dual Mode** | Rule filter (dangerous commands + path allowlist) → Tool self-check → AI risk classifier → Human confirmation. Every destructive tool (Bash / Write / Edit) reaches L3 — including the ones that discard uncommitted work (`git reset --hard`, `git checkout --`, `git branch -D`); whitelisted read-only Bash commands are the only thing that short-circuits. Every classifier failure path (no model / exception / out-of-vocabulary risk / unparseable JSON) resolves to HIGH, never a silent pass. Plan mode physically removes write tools |
 | 8 | **Concurrent Tool Execution** | Tools declaring `is_concurrency_safe` run together via `asyncio.gather`; blocking I/O (file / network / SQLite) is pushed to threads with `asyncio.to_thread`, so reading N files costs 1× latency instead of N× |
+| 9 | **Persistent Task Graph** | `TaskCreate / TaskUpdate / TaskList` store dependency-aware tasks in `.minicode/tasks.json`. Dependencies and state transitions are enforced by the store; snapshots survive session restart and context compression |
 
 ---
 
@@ -135,7 +137,7 @@ python main.py "Implement the feature" --isolate-subagents
 python main.py "Run the tests" --sandbox-bash --sandbox-image alpine:3.20
 ```
 
-### Available Tools (13 + 3 optional Worktree lifecycle tools)
+### Available Tools (16 + 3 optional Worktree lifecycle tools)
 
 | Tool | Description |
 |------|-------------|
@@ -145,6 +147,9 @@ python main.py "Run the tests" --sandbox-bash --sandbox-image alpine:3.20
 | `Grep` / `Glob` | Regex content search / filename-pattern search |
 | `WebSearch` / `WebFetch` | Tavily web search / page fetch with HTML→text |
 | `TodoWrite` | In-session task list — treated as a long-task anchor: it is excluded from Snip and re-injected after Autocompact, so the plan survives compression |
+| `TaskCreate` | Create a persistent task; dependencies must reference existing task IDs |
+| `TaskUpdate` | Start or complete a task after dependency and state-machine validation |
+| `TaskList` | List tasks, readiness, blockers and status counts; completed tasks are opt-in |
 | `Skill` | Progressive skill activation |
 | `RecallMemory` | Cross-session experience retrieval |
 | `Remember` | Persist knowledge to long-term memory |
@@ -197,6 +202,23 @@ containerized by this option.
 The default image is `alpine:3.20`. For a project requiring Python, pass an image
 that contains the required runtime, for example `--sandbox-image python:3.12-slim`.
 
+### Persistent task graph
+
+`TaskCreate`, `TaskUpdate` and `TaskList` give the model a durable plan in
+`.minicode/tasks.json`. Tasks move only through `pending → in_progress → completed`.
+A pending task cannot start until every `blocked_by` task is completed; malformed
+files and dangling dependencies fail closed and are never overwritten.
+
+The current open-task snapshot is injected into the dynamic system-prompt section
+and is also used as the long-task compression anchor. Completed tasks are excluded
+from automatic prompt injection and are available only through
+`TaskList(include_completed=True)`.
+
+Plan mode exposes `TaskCreate` and `TaskList`, but not `TaskUpdate`: it can write and
+inspect a plan without pretending execution already happened. Main and child agents
+share one project-scoped store. The first version is single-process and deliberately
+has no claims, leases or background scheduler.
+
 ### Execution Modes
 
 - **Normal**: Full tool access
@@ -208,7 +230,7 @@ that contains the required runtime, for example `--sandbox-image python:3.12-sli
 
 ```bash
 python -m pytest tests/ -v
-# 303 collected: 302 passed, 1 skipped
+# 321 collected: 320 passed, 1 skipped
 ```
 
 ---
@@ -246,7 +268,7 @@ minicode/
 ├── skills/                     # Skill definitions (markdown)
 │   └── code_review.md          # Example skill
 │
-└── tests/                      # 303 unit tests
+└── tests/                      # 321 tests
 ```
 
 ---

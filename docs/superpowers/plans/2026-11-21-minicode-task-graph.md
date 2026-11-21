@@ -1,6 +1,6 @@
 # MiniCode Persistent Task Graph Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add a model-operated persistent task graph with dependency validation, deterministic state transitions, session recovery, and compression anchoring.
 
@@ -28,7 +28,7 @@
 - Create: `capabilities/task_graph.py`
 - Test: `tests/test_task_graph.py`
 
-- [ ] **Step 1: Write storage and state tests**
+- [x] **Step 1: Write storage and state tests**
 
 ```python
 import json
@@ -90,12 +90,12 @@ def test_corrupt_task_file_fails_closed(tmp_path):
     assert path.read_text(encoding="utf-8") == "{broken"
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run: `python -m pytest tests/test_task_graph.py -q`  
 Expected: collection fails because `capabilities.task_graph` does not exist.
 
-- [ ] **Step 3: Implement the store**
+- [x] **Step 3: Implement the store**
 
 ```python
 class TaskGraphError(RuntimeError):
@@ -198,12 +198,12 @@ class TaskGraphStore:
 
 Also implement `_utc_now`, `_new_id`, `_validated_text`, `_find_task`, `_unfinished_blockers`, and `_validate_graph`. `_validate_graph` rejects unknown versions, non-list tasks, duplicate IDs, invalid statuses, non-string subjects, and unknown dependency IDs.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `python -m pytest tests/test_task_graph.py -q`  
 Expected: PASS for storage and state-machine tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add capabilities/task_graph.py tests/test_task_graph.py
@@ -216,7 +216,7 @@ git commit -m "feat: add persistent task graph store"
 - Modify: `capabilities/task_graph.py`
 - Test: `tests/test_task_graph.py`
 
-- [ ] **Step 1: Write tool-output tests**
+- [x] **Step 1: Write tool-output tests**
 
 ```python
 import pytest
@@ -249,12 +249,12 @@ async def test_blocked_count_is_derived_from_dependencies(tmp_path):
     assert "blocked=1" in output
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run: `python -m pytest tests/test_task_graph.py -q`  
 Expected: import fails because the three tool classes are missing.
 
-- [ ] **Step 3: Implement tools and rendering**
+- [x] **Step 3: Implement tools and rendering**
 
 ```python
 class TaskCreateTool(Tool):
@@ -311,12 +311,12 @@ class TaskListTool(Tool):
 
 `render_snapshot()` headings, status rows, blockers, and counts. It starts with `## Task Graph` so the Loop can identify valid snapshots.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `python -m pytest tests/test_task_graph.py -q`  
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add capabilities/task_graph.py tests/test_task_graph.py
@@ -330,7 +330,7 @@ git commit -m "feat: expose task graph tools"
 - Modify: `capabilities/security.py`
 - Modify: `tests/test_wiring.py`
 
-- [ ] **Step 1: Write wiring tests**
+- [x] **Step 1: Write wiring tests**
 
 ```python
 def test_normal_mode_registers_task_graph_tools(tmp_path, monkeypatch):
@@ -366,12 +366,12 @@ def test_subagent_factory_reuses_parent_task_store(tmp_path, monkeypatch):
         memory_manager.close()
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run: `python -m pytest tests/test_wiring.py -q`  
 Expected: task tools are absent; Plan-mode assertions fail.
 
-- [ ] **Step 3: Wire the store into main**
+- [x] **Step 3: Wire the store into main**
 
 ```python
 from capabilities.task_graph import (
@@ -407,7 +407,7 @@ def workspace_tool_factory(root):
     }
 ```
 
-- [ ] **Step 4: Update Plan-mode whitelist**
+- [x] **Step 4: Update Plan-mode whitelist**
 
 In `capabilities/security.py`:
 
@@ -417,12 +417,12 @@ PLAN_MODE_EXTRA_TOOLS = {"TodoWrite", "TaskCreate", "TaskList"}
 
 Do not add `TaskUpdate`; plan mode creates and views plans but cannot claim execution.
 
-- [ ] **Step 5: Run wiring tests**
+- [x] **Step 5: Run wiring tests**
 
 Run: `python -m pytest tests/test_wiring.py -q`  
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add main.py capabilities/security.py tests/test_wiring.py
@@ -436,7 +436,7 @@ git commit -m "feat: wire task graph into main and subagents"
 - Modify: `main.py`
 - Test: `tests/test_task_graph.py`
 
-- [ ] **Step 1: Write prompt tests**
+- [x] **Step 1: Write prompt tests**
 
 ```python
 def test_prompt_injects_open_tasks_only(tmp_path):
@@ -463,12 +463,12 @@ def test_prompt_reports_corrupt_graph_without_crashing(tmp_path, monkeypatch):
         memory_manager.close()
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run: `python -m pytest tests/test_task_graph.py -q`  
 Expected: `prompt_hint` is absent or prompt does not include the dynamic section.
 
-- [ ] **Step 3: Add prompt parameter and renderer**
+- [x] **Step 3: Add prompt parameter and renderer**
 
 ```python
 def build_system_prompt(..., memory_hint: str = "", task_graph_hint: str = "") -> str:
@@ -483,7 +483,7 @@ def build_system_prompt(..., memory_hint: str = "", task_graph_hint: str = "") -
 
 Place the task graph before memory and routing so the most task-specific routing block remains last.
 
-- [ ] **Step 4: Build a safe hint in main**
+- [x] **Step 4: Build a safe hint in main**
 
 ```python
 task_graph_warning_emitted = False
@@ -501,12 +501,12 @@ def task_graph_hint() -> str:
 
 Pass `task_graph_hint=task_graph_hint()` into `build_system_prompt()`.
 
-- [ ] **Step 5: Run prompt tests**
+- [x] **Step 5: Run prompt tests**
 
 Run: `python -m pytest tests/test_task_graph.py tests/test_wiring.py -q`  
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add main.py prompt/system_prompt.py tests/test_task_graph.py
@@ -519,7 +519,7 @@ git commit -m "feat: inject and recover task graph context"
 - Modify: `core/agent_loop.py`
 - Modify: `tests/test_task_anchor.py`
 
-- [ ] **Step 1: Write the anchor test**
+- [x] **Step 1: Write the anchor test**
 
 ```python
 @pytest.mark.asyncio
@@ -539,12 +539,12 @@ async def test_task_graph_tool_result_becomes_compression_anchor(tmp_path, monke
     assert "实现压缩锚点" in loop._compressor._task_list
 ```
 
-- [ ] **Step 2: Run test and verify it fails**
+- [x] **Step 2: Run test and verify it fails**
 
 Run: `python -m pytest tests/test_task_anchor.py::test_task_graph_tool_result_becomes_compression_anchor -q`  
 Expected: anchor remains empty.
 
-- [ ] **Step 3: Register graph snapshots**
+- [x] **Step 3: Register graph snapshots**
 
 ```python
 TASK_GRAPH_TOOLS = {"TaskCreate", "TaskUpdate", "TaskList"}
@@ -555,12 +555,12 @@ elif tool_name in TASK_GRAPH_TOOLS and "## Task Graph" in result:
     self._compressor.record_task_list(result)
 ```
 
-- [ ] **Step 4: Run all compression-anchor tests**
+- [x] **Step 4: Run all compression-anchor tests**
 
 Run: `python -m pytest tests/test_task_anchor.py -q`  
 Expected: PASS; existing TodoWrite behavior remains green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add core/agent_loop.py tests/test_task_anchor.py
@@ -574,12 +574,12 @@ git commit -m "feat: preserve task graph across compression"
 - Modify: `DESIGN.md`
 - Modify: `ROADMAP.md`
 
-- [ ] **Step 1: Run the full suite before documentation numbers**
+- [x] **Step 1: Run the full suite before documentation numbers**
 
 Run: `python -m pytest -q`  
 Expected: all tests pass; record the exact passed/skipped count for documentation.
 
-- [ ] **Step 2: Document verified behavior**
+- [x] **Step 2: Document verified behavior**
 
 Update README:
 
@@ -590,7 +590,7 @@ Update README:
 
 Update DESIGN with the data model, state machine, compressed anchor, corrupt-file behavior, and single-process limitation. Update ROADMAP from missing persistence to implemented persistence while retaining “no claims/leases/multi-process scheduler” as future work.
 
-- [ ] **Step 3: Run all verification**
+- [x] **Step 3: Run all verification**
 
 Run:
 
@@ -604,7 +604,7 @@ git diff --check
 
 Expected: every command exits 0 and the documented test count matches pytest.
 
-- [ ] **Step 4: Commit documentation**
+- [x] **Step 4: Commit documentation**
 
 ```bash
 git add README.md DESIGN.md ROADMAP.md
@@ -613,13 +613,13 @@ git commit -m "docs: document persistent task graph"
 
 ## Final Acceptance Checklist
 
-- [ ] `TaskGraphStore` persists tasks under `.minicode/tasks.json`.
-- [ ] Dependencies and status transitions are enforced before writes.
-- [ ] Corrupt files produce a warning and are never overwritten.
-- [ ] `TaskCreate / TaskUpdate / TaskList` are registered in Normal mode.
-- [ ] Plan mode registers only `TaskCreate / TaskList` from the new tools.
-- [ ] Main and child agents share one store instance.
-- [ ] Prompt injection contains open tasks only.
-- [ ] All three graph tools register successful snapshots as compression anchors.
-- [ ] Existing TodoWrite behavior is unchanged.
-- [ ] Full tests, claim verification, compileall, pyflakes, and diff checks pass.
+- [x] `TaskGraphStore` persists tasks under `.minicode/tasks.json`.
+- [x] Dependencies and status transitions are enforced before writes.
+- [x] Corrupt files produce a warning and are never overwritten.
+- [x] `TaskCreate / TaskUpdate / TaskList` are registered in Normal mode.
+- [x] Plan mode registers only `TaskCreate / TaskList` from the new tools.
+- [x] Main and child agents share one store instance.
+- [x] Prompt injection contains open tasks only.
+- [x] All three graph tools register successful snapshots as compression anchors.
+- [x] Existing TodoWrite behavior is unchanged.
+- [x] Full tests, claim verification, compileall, pyflakes, and diff checks pass.
