@@ -233,6 +233,24 @@ def _topic_overlap(left: str, right: str) -> float:
     return len(a & b) / len(a | b)
 
 
+def _validate_entry_metadata(entry: MemoryEntry) -> None:
+    if not entry.content.strip():
+        raise ValueError("memory content cannot be empty")
+    checks = (
+        ("scope", entry.scope, VALID_MEMORY_SCOPES),
+        ("source", entry.source, VALID_MEMORY_SOURCES),
+        ("evidence_level", entry.evidence_level, VALID_EVIDENCE_LEVELS),
+        ("status", entry.status, VALID_MEMORY_STATUSES),
+    )
+    for field_name, value, allowed in checks:
+        if value not in allowed:
+            raise ValueError(f"invalid memory {field_name}: {value}")
+    if entry.scope == "persistent" and any(
+        marker in entry.content for marker in TEMPORARY_MEMORY_MARKERS
+    ):
+        raise ValueError("temporary task information cannot be persistent memory")
+
+
 # ── Shared ranking helpers (used by all backends) ──
 
 def _normalize_key(s: str) -> str:
@@ -405,6 +423,16 @@ MAX_CLAUDE_MD_CHARS = 8000
 # 记忆注入的预算：最多几条、总共多少字符。
 MEMORY_HINT_TOP_K = 3
 MEMORY_HINT_MAX_CHARS = 600
+
+VALID_MEMORY_SCOPES = {"persistent", "current_task"}
+VALID_MEMORY_SOURCES = {
+    "user_correction", "verified_fix", "explicit", "task_log", "observed",
+}
+VALID_EVIDENCE_LEVELS = {"user", "verified", "observed", "inferred"}
+VALID_MEMORY_STATUSES = {"active", "conflicted", "superseded"}
+TEMPORARY_MEMORY_MARKERS = (
+    "本次任务", "当前任务", "本次会话", "临时路径", "这次不要", "本次不要",
+)
 
 # ── 领域词典（别名归一化）──
 # 动机：记忆是字面检索，而**中英混排**是这个项目的常态 —— 用户用中文提问，
@@ -1226,6 +1254,7 @@ class MemoryManager:
     # ── Entry-level memory (delegated to store) ──
 
     async def _add_entry(self, entry: MemoryEntry) -> MemoryEntry:
+        _validate_entry_metadata(entry)
         existing = await asyncio.to_thread(
             self._store.list_entries, entry.memory_type
         )

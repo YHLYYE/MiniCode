@@ -8,10 +8,48 @@ from capabilities.memory import (
     MemoryEntry,
     MemoryManager,
     MemoryType,
+    JSONMemoryStore,
     SQLiteMemoryStore,
     format_memory_hint,
 )
 from main import _build_tools
+
+
+def _store(tmp_path, backend):
+    return (
+        SQLiteMemoryStore(tmp_path / "mem.sqlite")
+        if backend == "sqlite"
+        else JSONMemoryStore(tmp_path / "json_memories")
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("scope", "global"),
+        ("source", "random"),
+        ("evidence_level", "guessed"),
+        ("status", "deleted"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_invalid_memory_metadata_is_rejected(tmp_path, field, value):
+    mm = MemoryManager(project_root=tmp_path)
+    kwargs = {field: value}
+
+    with pytest.raises(ValueError, match=field):
+        await mm.record_procedural("metadata validation", **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_temporary_text_cannot_be_persistent_memory(tmp_path):
+    mm = MemoryManager(project_root=tmp_path)
+
+    with pytest.raises(ValueError, match="temporary"):
+        await mm.record_procedural(
+            "本次任务临时使用 /tmp/build，结束就清理",
+            scope="persistent",
+        )
 
 
 def test_old_sqlite_rows_migrate_with_safe_defaults(tmp_path):
@@ -61,8 +99,9 @@ def test_memory_entry_metadata_round_trip():
 
 
 @pytest.mark.asyncio
-async def test_current_task_memory_is_not_automatically_injected(tmp_path):
-    mm = MemoryManager(project_root=tmp_path)
+@pytest.mark.parametrize("backend", ["sqlite", "json"])
+async def test_current_task_memory_is_not_automatically_injected(tmp_path, backend):
+    mm = MemoryManager(project_root=tmp_path, store=_store(tmp_path, backend))
     await mm.record_procedural(
         "本次任务的临时路径 /tmp/build",
         scope="current_task",
@@ -77,8 +116,9 @@ async def test_current_task_memory_is_not_automatically_injected(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_new_user_correction_supersedes_old_rule(tmp_path):
-    store = SQLiteMemoryStore(tmp_path / "mem.sqlite")
+@pytest.mark.parametrize("backend", ["sqlite", "json"])
+async def test_new_user_correction_supersedes_old_rule(tmp_path, backend):
+    store = _store(tmp_path, backend)
     mm = MemoryManager(project_root=tmp_path, store=store)
     old = await mm.record_procedural(
         "用户纠正：使用 Tab 缩进",
@@ -99,8 +139,9 @@ async def test_new_user_correction_supersedes_old_rule(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_uncertain_same_subject_entries_are_marked_conflicted(tmp_path):
-    store = SQLiteMemoryStore(tmp_path / "mem.sqlite")
+@pytest.mark.parametrize("backend", ["sqlite", "json"])
+async def test_uncertain_same_subject_entries_are_marked_conflicted(tmp_path, backend):
+    store = _store(tmp_path, backend)
     mm = MemoryManager(project_root=tmp_path, store=store)
     first = await mm.record_procedural(
         "提交前先跑 pytest",
