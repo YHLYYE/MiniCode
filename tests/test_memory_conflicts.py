@@ -172,6 +172,21 @@ async def test_high_overlap_without_subject_key_is_marked_conflicted(tmp_path):
     assert store.get(second.id).status == "conflicted"
 
 
+@pytest.mark.asyncio
+async def test_high_overlap_user_correction_does_not_supersede_without_topic_key(tmp_path):
+    store = SQLiteMemoryStore(tmp_path / "mem.sqlite")
+    mm = MemoryManager(project_root=tmp_path, store=store)
+    first = await mm.record_procedural("提交前运行 pytest 再提交")
+    second = await mm.record_procedural(
+        "提交前运行 pytest 不用再提交",
+        source="user_correction",
+        evidence_level="user",
+    )
+
+    assert store.get(first.id).status == "conflicted"
+    assert store.get(second.id).status == "conflicted"
+
+
 def test_current_task_entry_is_not_injected_by_default(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 

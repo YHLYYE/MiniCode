@@ -1278,8 +1278,8 @@ class MemoryManager:
             ]
         related = same_topic or similar
         if related:
-            if entry.source == "user_correction":
-                superseded = same_topic or related
+            if entry.source == "user_correction" and same_topic:
+                superseded = same_topic
                 for item in superseded:
                     await asyncio.to_thread(
                         self._store.update_metadata,
