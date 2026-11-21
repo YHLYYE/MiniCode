@@ -1,5 +1,6 @@
 import pytest
 
+from config import Config
 from capabilities.task_graph import (
     TaskCreateTool,
     TaskGraphError,
@@ -7,6 +8,8 @@ from capabilities.task_graph import (
     TaskListTool,
     TaskUpdateTool,
 )
+from main import _build_tools
+from prompt.system_prompt import build_system_prompt
 
 
 def test_create_task_persists_and_reloads(tmp_path):
@@ -99,3 +102,44 @@ async def test_blocked_count_is_derived_from_dependencies(tmp_path):
 
     assert second["id"] in output
     assert "blocked=1" in output
+
+
+def test_prompt_injects_open_tasks_only(tmp_path):
+    store = TaskGraphStore(tmp_path)
+    open_task = store.create("未完成")
+    done = store.create("已完成")
+    store.update(done["id"], "in_progress")
+    store.update(done["id"], "completed")
+
+    hint = store.prompt_hint()
+
+    assert open_task["id"] in hint
+    assert done["id"] not in hint
+
+
+def test_system_prompt_renders_task_graph_hint(tmp_path):
+    store = TaskGraphStore(tmp_path)
+    task = store.create("提示词任务")
+
+    prompt = build_system_prompt(task_graph_hint=store.prompt_hint())
+
+    assert "## Task Graph" in prompt
+    assert task["id"] in prompt
+
+
+def test_prompt_reports_corrupt_graph_without_crashing(
+    tmp_path, monkeypatch, capsys
+):
+    (tmp_path / ".minicode").mkdir()
+    (tmp_path / ".minicode" / "tasks.json").write_text(
+        "{broken", encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+
+    _, prompt, _, memory_manager, factory = _build_tools("normal", Config())
+    try:
+        assert "Task Graph Unavailable" in prompt
+        assert "Task Graph Unavailable" in factory("new task")
+        assert "Task graph unavailable" in capsys.readouterr().out
+    finally:
+        memory_manager.close()

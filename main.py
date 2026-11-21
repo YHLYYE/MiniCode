@@ -45,6 +45,7 @@ from capabilities.compression import summarize_messages
 from capabilities.docker_sandbox import DockerBashTool
 from capabilities.task_graph import (
     TaskCreateTool,
+    TaskGraphError,
     TaskGraphStore,
     TaskListTool,
     TaskUpdateTool,
@@ -85,6 +86,17 @@ def _build_tools(mode: str, config: Config, inject_memory: bool = True,
         TaskUpdateTool(task_store),
         TaskListTool(task_store),
     ]
+    task_graph_warning_emitted = False
+
+    def task_graph_hint() -> str:
+        nonlocal task_graph_warning_emitted
+        try:
+            return task_store.prompt_hint()
+        except TaskGraphError as exc:
+            if not task_graph_warning_emitted:
+                print(f"[Task graph unavailable: {exc}]")
+                task_graph_warning_emitted = True
+            return f"## Task Graph Unavailable\n{exc}"
 
     def _agent_factory(tools, system_prompt, max_turns):
         """Spawn a sub-agent sharing the parent's model and memory store."""
@@ -198,6 +210,7 @@ def _build_tools(mode: str, config: Config, inject_memory: bool = True,
             session_summary=memory_manager.load_session_summary(),
             routing_hint=skill_system.routing_hint(task, top_k=3),
             memory_hint=memory_hint,
+            task_graph_hint=task_graph_hint(),
         )
 
     system_prompt = system_prompt_for("")

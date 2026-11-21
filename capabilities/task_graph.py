@@ -129,6 +129,35 @@ class TaskGraphStore:
         )
         return "\n".join(lines)
 
+    def prompt_hint(self, max_chars: int = 4000) -> str:
+        tasks = self.tasks()
+        by_id = {task["id"]: task for task in tasks}
+        unfinished = [task for task in tasks if task["status"] != "completed"]
+        if not unfinished:
+            return ""
+
+        progressing = [task for task in unfinished if task["status"] == "in_progress"]
+        pending = [task for task in unfinished if task["status"] == "pending"]
+        selected = (progressing + pending)[:12]
+        omitted = max(0, len(unfinished) - len(selected))
+
+        lines = ["## Task Graph", "Current persistent plan:"]
+        for task in selected:
+            state = task["status"]
+            if state == "pending":
+                state = _readiness(task, by_id)
+            subject = " ".join(task["subject"].split())
+            line = f"- {task['id']} [{state}] {subject}"
+            if task.get("blocked_by"):
+                line += f" (blocked_by: {', '.join(task['blocked_by'])})"
+            if len("\n".join([*lines, line])) > max_chars:
+                omitted += 1
+                continue
+            lines.append(line)
+        if omitted:
+            lines.append(f"- ... {omitted} more unfinished task(s)")
+        return "\n".join(lines)[:max_chars]
+
     def _load_unlocked(self) -> dict:
         if not self.path.exists():
             return {"version": 1, "tasks": []}
