@@ -2,7 +2,7 @@
 
 > Reference: Claude Code architecture (reverse-engineered from how-claude-code-works),
 > implemented in **~4,850 lines of pure Python** with **zero LangChain dependency**.
-> 293 unit tests (1 skipped), all passing.
+> 294 unit tests (1 skipped), all passing.
 
 A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill routing**,
 **3-tier Memory system**, **3-tier Context Compression with measurable benchmarks**,
@@ -47,6 +47,21 @@ Autocompact（全量）压缩比 99.95% →   28  token
 开压缩  累计 input token     425,520  →  任务成功
 ───────────────────────────────────
 Token 成本降低：63.7%
+```
+
+验证与 Worktree 生命周期基准（脚本化离线场景）：
+
+```shell
+python -m benchmarks.verification_worktree_bench --output artifacts
+```
+
+```text
+场景通过                 4/4
+假完成被阻断              1
+Worktree 内验收后提交     1
+应用前主工作区修改数      0
+cherry-pick 冲突回滚      1
+自动合并次数              0
 ```
 
 > **这个数字改过。** 早期版本的 `_snip` 按「结果大小」排序、优先裁掉最大的，
@@ -170,7 +185,7 @@ already in progress.
 
 ```bash
 python -m pytest tests/ -v
-# 293 collected: 292 passed, 1 skipped
+# 294 collected: 293 passed, 1 skipped
 ```
 
 ---
@@ -208,7 +223,7 @@ minicode/
 ├── skills/                     # Skill definitions (markdown)
 │   └── code_review.md          # Example skill
 │
-└── tests/                      # 293 unit tests
+└── tests/                      # 294 unit tests
 ```
 
 ---
