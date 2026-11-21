@@ -42,6 +42,7 @@ from capabilities.worktree import (
     WorktreeRemoveTool,
 )
 from capabilities.compression import summarize_messages
+from capabilities.docker_sandbox import DockerBashTool
 from capabilities.verification import CommandVerifier
 from capabilities.security import resolve_tools_for_mode, ExecutionMode
 from prompt.system_prompt import build_system_prompt
@@ -54,7 +55,10 @@ PACKAGE_ROOT = Path(__file__).resolve().parent
 
 def _build_tools(mode: str, config: Config, inject_memory: bool = True,
                  isolate_subagents: bool = False,
-                 subagent_verifier_factory=None):
+                 subagent_verifier_factory=None,
+                 sandbox_bash: bool = False,
+                 sandbox_image: str = "alpine:3.20",
+                 sandbox_network: str = "none"):
     """Initialize subsystems.
 
     Returns (tools, system_prompt, exec_mode, memory_manager,
@@ -91,8 +95,16 @@ def _build_tools(mode: str, config: Config, inject_memory: bool = True,
             memory_manager=memory_manager,  # project-scoped memory sharing
         )
 
+    main_bash = (
+        DockerBashTool(
+            Path.cwd(),
+            image=sandbox_image,
+            network=sandbox_network,
+        )
+        if sandbox_bash else BashTool()
+    )
     base_tools = [
-        ReadTool(), WriteTool(), EditTool(), BashTool(), GrepTool(), GlobTool(),
+        ReadTool(), WriteTool(), EditTool(), main_bash, GrepTool(), GlobTool(),
         WebSearchTool(), WebFetchTool(), TodoWriteTool(),
         SkillTool(skill_system),
         RecallMemoryTool(memory_manager),
@@ -106,7 +118,11 @@ def _build_tools(mode: str, config: Config, inject_memory: bool = True,
                 ReadTool(workspace_root=root),
                 WriteTool(workspace_root=root),
                 EditTool(workspace_root=root),
-                BashTool(workspace_root=root),
+                DockerBashTool(
+                    root,
+                    image=sandbox_image,
+                    network=sandbox_network,
+                ) if sandbox_bash else BashTool(workspace_root=root),
                 GrepTool(workspace_root=root),
                 GlobTool(workspace_root=root),
                 WebSearchTool(),
@@ -200,10 +216,17 @@ def _make_subagent_verifier_factory(verify_command, verify_timeout):
               help="验收失败后最多回灌修复的轮数")
 @click.option("--isolate-subagents", is_flag=True,
               help="让可写子 Agent 在独立 Git Worktree 中执行")
+@click.option("--sandbox-bash", is_flag=True,
+              help="把 Bash 放进 Docker 容器中执行")
+@click.option("--sandbox-image", default="alpine:3.20",
+              help="Bash 沙箱镜像")
+@click.option("--sandbox-network", type=click.Choice(["none", "bridge"]),
+              default="none", help="Bash 沙箱网络")
 def main(task: str | None, mode: str, max_turns: int, max_cost: float,
          resume: str | None, list_sessions: bool, no_memory_inject: bool,
          verify_command: str | None, verify_timeout: int, verify_retries: int,
-         isolate_subagents: bool):
+         isolate_subagents: bool, sandbox_bash: bool, sandbox_image: str,
+         sandbox_network: str):
     """MiniCode — AI Coding Agent
 
     TASK: (可选) 单次任务。不传则进入交互式 REPL。
@@ -239,6 +262,9 @@ def main(task: str | None, mode: str, max_turns: int, max_cost: float,
         subagent_verifier_factory=_make_subagent_verifier_factory(
             verify_command, verify_timeout
         ),
+        sandbox_bash=sandbox_bash,
+        sandbox_image=sandbox_image,
+        sandbox_network=sandbox_network,
     )
 
     # --resume: 加载历史会话
