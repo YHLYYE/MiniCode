@@ -135,6 +135,15 @@ class MemoryEntry:
     #                      出现工具错误 −1。用可观测代理代替"我觉得有用"。
     retrieval_count: int = 0
     adoption_count: int = 0
+    scope: str = "persistent"
+    source: str = "observed"
+    evidence_level: str = "observed"
+    subject_key: str = ""
+    status: str = "active"
+    conflict_group: str = ""
+    supersedes_id: str = ""
+    success_count: int = 0
+    failure_count: int = 0
 
     @classmethod
     def make(cls, memory_type: MemoryType, content: str, **kwargs) -> "MemoryEntry":
@@ -146,6 +155,13 @@ class MemoryEntry:
             type=memory_type.value,
             **kwargs,
         )
+
+    def to_dict(self) -> dict:
+        return _entry_to_dict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "MemoryEntry":
+        return _dict_to_entry(data)
 
 
 # ── Serialization helpers (module-level, shared by backends) ──
@@ -159,6 +175,15 @@ def _entry_to_dict(entry: MemoryEntry) -> dict:
         "hit_count": entry.hit_count,
         "retrieval_count": entry.retrieval_count,
         "adoption_count": entry.adoption_count,
+        "scope": entry.scope,
+        "source": entry.source,
+        "evidence_level": entry.evidence_level,
+        "subject_key": entry.subject_key,
+        "status": entry.status,
+        "conflict_group": entry.conflict_group,
+        "supersedes_id": entry.supersedes_id,
+        "success_count": entry.success_count,
+        "failure_count": entry.failure_count,
     }
 
 
@@ -177,6 +202,15 @@ def _dict_to_entry(d: dict) -> MemoryEntry:
         hit_count=int(d.get("hit_count", 1) or 1),
         retrieval_count=int(d.get("retrieval_count", 0) or 0),
         adoption_count=int(d.get("adoption_count", 0) or 0),
+        scope=d.get("scope", "persistent") or "persistent",
+        source=d.get("source", "observed") or "observed",
+        evidence_level=d.get("evidence_level", "observed") or "observed",
+        subject_key=d.get("subject_key", "") or "",
+        status=d.get("status", "active") or "active",
+        conflict_group=d.get("conflict_group", "") or "",
+        supersedes_id=d.get("supersedes_id", "") or "",
+        success_count=int(d.get("success_count", 0) or 0),
+        failure_count=int(d.get("failure_count", 0) or 0),
     )
 
 
@@ -729,7 +763,16 @@ class SQLiteMemoryStore(MemoryStore):
                     fingerprint TEXT DEFAULT '',
                     hit_count INTEGER DEFAULT 1,
                     retrieval_count INTEGER DEFAULT 0,
-                    adoption_count INTEGER DEFAULT 0
+                    adoption_count INTEGER DEFAULT 0,
+                    scope TEXT DEFAULT 'persistent',
+                    source TEXT DEFAULT 'observed',
+                    evidence_level TEXT DEFAULT 'observed',
+                    subject_key TEXT DEFAULT '',
+                    status TEXT DEFAULT 'active',
+                    conflict_group TEXT DEFAULT '',
+                    supersedes_id TEXT DEFAULT '',
+                    success_count INTEGER DEFAULT 0,
+                    failure_count INTEGER DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS idx_memories_type
                     ON memories(memory_type);
@@ -754,7 +797,16 @@ class SQLiteMemoryStore(MemoryStore):
         for name, ddl in (("fingerprint", "TEXT DEFAULT ''"),
                           ("hit_count", "INTEGER DEFAULT 1"),
                           ("retrieval_count", "INTEGER DEFAULT 0"),
-                          ("adoption_count", "INTEGER DEFAULT 0")):
+                          ("adoption_count", "INTEGER DEFAULT 0"),
+                          ("scope", "TEXT DEFAULT 'persistent'"),
+                          ("source", "TEXT DEFAULT 'observed'"),
+                          ("evidence_level", "TEXT DEFAULT 'observed'"),
+                          ("subject_key", "TEXT DEFAULT ''"),
+                          ("status", "TEXT DEFAULT 'active'"),
+                          ("conflict_group", "TEXT DEFAULT ''"),
+                          ("supersedes_id", "TEXT DEFAULT ''"),
+                          ("success_count", "INTEGER DEFAULT 0"),
+                          ("failure_count", "INTEGER DEFAULT 0")):
             if name not in cols:
                 self._conn.execute(f"ALTER TABLE memories ADD COLUMN {name} {ddl}")
         rows = self._conn.execute(
@@ -793,8 +845,10 @@ class SQLiteMemoryStore(MemoryStore):
                 self._conn.execute(
                     "INSERT INTO memories "
                     "(id, memory_type, content, context, file_paths, tags, "
-                    "timestamp, success, fingerprint, hit_count) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    "timestamp, success, fingerprint, hit_count, scope, source, "
+                    "evidence_level, subject_key, status, conflict_group, "
+                    "supersedes_id, success_count, failure_count) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         entry.id,
                         entry.memory_type.value,
@@ -806,6 +860,15 @@ class SQLiteMemoryStore(MemoryStore):
                         1 if entry.success else 0,
                         fingerprint,
                         1,
+                        entry.scope,
+                        entry.source,
+                        entry.evidence_level,
+                        entry.subject_key,
+                        entry.status,
+                        entry.conflict_group,
+                        entry.supersedes_id,
+                        entry.success_count,
+                        entry.failure_count,
                     ),
                 )
             self._prune(entry.memory_type)
@@ -874,7 +937,9 @@ class SQLiteMemoryStore(MemoryStore):
             rows = self._conn.execute(
                 "SELECT id, memory_type, content, context, file_paths, "
                 "tags, timestamp, success, hit_count, retrieval_count, "
-                "adoption_count FROM memories "
+                "adoption_count, scope, source, evidence_level, subject_key, "
+                "status, conflict_group, supersedes_id, success_count, "
+                "failure_count FROM memories "
                 "WHERE memory_type = ? ORDER BY timestamp DESC",
                 (memory_type.value,),
             ).fetchall()
@@ -891,6 +956,15 @@ class SQLiteMemoryStore(MemoryStore):
                 "hit_count": r[8] if len(r) > 8 else 1,
                 "retrieval_count": r[9] if len(r) > 9 else 0,
                 "adoption_count": r[10] if len(r) > 10 else 0,
+                "scope": r[11] if len(r) > 11 else "persistent",
+                "source": r[12] if len(r) > 12 else "observed",
+                "evidence_level": r[13] if len(r) > 13 else "observed",
+                "subject_key": r[14] if len(r) > 14 else "",
+                "status": r[15] if len(r) > 15 else "active",
+                "conflict_group": r[16] if len(r) > 16 else "",
+                "supersedes_id": r[17] if len(r) > 17 else "",
+                "success_count": r[18] if len(r) > 18 else 0,
+                "failure_count": r[19] if len(r) > 19 else 0,
             }
             for r in rows
         ]
