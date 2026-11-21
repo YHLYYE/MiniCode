@@ -251,6 +251,15 @@ def _validate_entry_metadata(entry: MemoryEntry) -> None:
         raise ValueError("temporary task information cannot be persistent memory")
 
 
+def _matches_injection_scope(entry: dict, scope: str | None) -> bool:
+    if scope is None:
+        return True
+    return (
+        entry.get("scope", "persistent") == scope
+        and entry.get("status", "active") in {"active", "conflicted"}
+    )
+
+
 # ── Shared ranking helpers (used by all backends) ──
 
 def _normalize_key(s: str) -> str:
@@ -787,7 +796,7 @@ class JSONMemoryStore(MemoryStore):
                            scope: str | None = None) -> list[MemoryEntry]:
         entries = self._load_json_list(self._procedural_path)
         if scope is not None:
-            entries = [e for e in entries if e.get("scope", "persistent") == scope]
+            entries = [e for e in entries if _matches_injection_scope(e, scope)]
         return [_dict_to_entry(e)
                 for e in _rank_procedural(entries, query, top_k,
                                           min_matches=2 if strict else 1)]
@@ -797,7 +806,7 @@ class JSONMemoryStore(MemoryStore):
                          scope: str | None = None) -> list[MemoryEntry]:
         entries = self._load_json_list(self._episodic_path)
         if scope is not None:
-            entries = [e for e in entries if e.get("scope", "persistent") == scope]
+            entries = [e for e in entries if _matches_injection_scope(e, scope)]
         if not entries:
             return []
         return [_dict_to_entry(e)
@@ -1030,7 +1039,7 @@ class SQLiteMemoryStore(MemoryStore):
         if memory_type == MemoryType.PROCEDURAL:
             entries = self._load_type(MemoryType.PROCEDURAL)
             if scope is not None:
-                entries = [e for e in entries if e.get("scope", "persistent") == scope]
+                entries = [e for e in entries if _matches_injection_scope(e, scope)]
             return [_dict_to_entry(e)
                     for e in _rank_procedural(
                         entries, query, top_k,
@@ -1038,7 +1047,7 @@ class SQLiteMemoryStore(MemoryStore):
         if memory_type == MemoryType.EPISODIC:
             entries = self._load_type(MemoryType.EPISODIC)
             if scope is not None:
-                entries = [e for e in entries if e.get("scope", "persistent") == scope]
+                entries = [e for e in entries if _matches_injection_scope(e, scope)]
             return [_dict_to_entry(e)
                     for e in _rank_episodic(entries, query, top_k,
                                             min_similarity)]
@@ -1051,8 +1060,8 @@ class SQLiteMemoryStore(MemoryStore):
         procedural = self._load_type(MemoryType.PROCEDURAL)
         episodic = self._load_type(MemoryType.EPISODIC)
         if scope is not None:
-            procedural = [e for e in procedural if e.get("scope", "persistent") == scope]
-            episodic = [e for e in episodic if e.get("scope", "persistent") == scope]
+            procedural = [e for e in procedural if _matches_injection_scope(e, scope)]
+            episodic = [e for e in episodic if _matches_injection_scope(e, scope)]
         return _merge_by_rank([
             self._search_profile(query),          # 画像：key 命中，最可靠，放最前
             [_dict_to_entry(e)

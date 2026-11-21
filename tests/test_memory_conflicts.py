@@ -136,6 +136,10 @@ async def test_new_user_correction_supersedes_old_rule(tmp_path, backend):
     assert store.get(old.id).status == "superseded"
     assert store.get(new.id).status == "active"
     assert store.get(new.id).supersedes_id == old.id
+    automatic = mm.search_sync(
+        "Tab 空格缩进", top_k=5, scope="persistent"
+    )
+    assert all(entry.id != old.id for entry in automatic)
 
 
 @pytest.mark.asyncio
