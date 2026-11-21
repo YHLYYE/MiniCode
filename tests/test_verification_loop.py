@@ -3,7 +3,10 @@ import pytest
 from capabilities.verification import VerificationResult
 from core.agent_loop import AgentLoop
 from core.state import DoneEvent, TerminationReason
-from tests.test_agent_loop import MockModelAdapter, make_stop, make_text
+from core.tools.base import Tool
+from tests.test_agent_loop import (
+    MockModelAdapter, make_stop, make_tool_use, make_text
+)
 
 
 class FailingThenPassingVerifier:
@@ -69,3 +72,38 @@ async def test_agent_loop_exhausted_verification_is_not_success():
     done = next(event for event in events if isinstance(event, DoneEvent))
 
     assert done.state.termination_reason == TerminationReason.VERIFY_FAILED
+
+
+class BlockingTool(Tool):
+    name = "BlockingAgent"
+    input_schema = {}
+    description = "returns a structured completion blocker"
+
+    async def execute(self):
+        return "verification failed"
+
+    def completion_blocker(self):
+        return "isolated subagent verification failed"
+
+
+@pytest.mark.asyncio
+async def test_tool_completion_blocker_prevents_parent_success():
+    loop = AgentLoop(
+        tools=[BlockingTool()],
+        model_adapter=MockModelAdapter([
+            [make_tool_use("BlockingAgent"), make_stop()],
+            [make_text("done"), make_stop()],
+            [make_text("still done"), make_stop()],
+        ]),
+        system_prompt="Test.",
+        verify_retries=1,
+    )
+
+    events = [event async for event in loop.run("run isolated task")]
+    done = next(event for event in events if isinstance(event, DoneEvent))
+
+    assert done.state.termination_reason == TerminationReason.VERIFY_FAILED
+    assert any(
+        "isolated subagent verification failed" in message.content
+        for message in done.state.messages
+    )

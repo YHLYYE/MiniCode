@@ -136,6 +136,7 @@ class AgentTool(Tool):
         # 子 Agent 用完的 token / 成本攒在这里，等父级 drain_usage() 取走
         self._pending_tokens = 0
         self._pending_cost = 0.0
+        self._completion_error: str | None = None
 
     # ── 用量回流 ──
 
@@ -155,6 +156,9 @@ class AgentTool(Tool):
     def _record_subagent_usage(self, result: dict) -> None:
         self._pending_tokens += result.get("tokens", 0)
         self._pending_cost += result.get("cost_usd", 0.0)
+
+    def completion_blocker(self) -> str | None:
+        return self._completion_error
 
     async def execute(self, task: str, agent_type: str = "general") -> str:
         if agent_type == "team":
@@ -187,12 +191,19 @@ class AgentTool(Tool):
                         ).verify()
                     if verification is not None and not verification.passed:
                         commit = None
-                        diff = ""
-                        changed = []
+                        diff = self._worktree_manager.working_tree_status(handle)
+                        changed = self._worktree_manager.working_tree_changed_files(
+                            handle
+                        )
                         verify_line = (
                             "verification: failed\n"
                             f"verify_exit_code: {verification.exit_code}\n"
                             f"verify_evidence:\n{verification.output}"
+                        )
+                        self._completion_error = (
+                            f"isolated subagent verification failed: "
+                            f"exit={verification.exit_code}, "
+                            f"branch={handle.branch}, path={handle.path}"
                         )
                     else:
                         commit = self._worktree_manager.commit(
@@ -205,10 +216,12 @@ class AgentTool(Tool):
                             if verification is not None
                             else "verification: not_configured"
                         )
+                        self._completion_error = None
                     result["worktree_header"] = (
                         f"branch: {handle.branch}\n"
                         f"commit: {commit or 'none'}\n"
                         f"path: {handle.path}\n"
+                        f"uncommitted: {'true' if commit is None else 'false'}\n"
                         f"{verify_line}\n"
                         f"changed_files: {changed}\n"
                         f"diff:\n{diff}"
@@ -217,6 +230,10 @@ class AgentTool(Tool):
                     result = await self._run_subagent(task, profile)
             except Exception as e:
                 if handle is not None:
+                    self._completion_error = (
+                        f"isolated subagent failed: {e}; "
+                        f"branch={handle.branch}, path={handle.path}"
+                    )
                     return (
                         f"Sub-agent ({agent_type}) failed: {e}\n"
                         f"branch: {handle.branch}\n"
@@ -362,6 +379,11 @@ class AgentTool(Tool):
         )
         commit = None
         verification = None
+        if not passed:
+            self._completion_error = (
+                "isolated team workflow failed; "
+                f"branch={handle.branch}, path={handle.path}"
+            )
         if passed:
             if self._verifier_factory is not None:
                 try:
@@ -370,18 +392,31 @@ class AgentTool(Tool):
                     ).verify()
                 except Exception as exc:
                     verification = None
+                    self._completion_error = (
+                        f"isolated team verification failed to run: {exc}; "
+                        f"branch={handle.branch}, path={handle.path}"
+                    )
                     return (
                         f"Agent Team verification failed to run: {exc}\n"
                         f"branch: {handle.branch}\n"
                         f"path: {handle.path}\n"
                     )
             if verification is not None and not verification.passed:
+                self._completion_error = (
+                    "isolated team verification failed: "
+                    f"exit={verification.exit_code}, "
+                    f"branch={handle.branch}, path={handle.path}"
+                )
                 lines = [
                     f"[Agent Team: {len(results)}/{len(self.TEAM_ROLES)} steps, "
                     "isolated]\n"
+                    "status: verification_failed\n"
                     f"branch: {handle.branch}\n"
                     "commit: none\n"
                     f"path: {handle.path}\n"
+                    "uncommitted: true\n"
+                    f"changed_files: {self._worktree_manager.working_tree_changed_files(handle)}\n"
+                    f"working_tree:\n{self._worktree_manager.working_tree_status(handle)}\n"
                     "verification: failed\n"
                     f"verify_exit_code: {verification.exit_code}\n"
                     f"verify_evidence:\n{verification.output}\n"
@@ -395,7 +430,16 @@ class AgentTool(Tool):
                     handle, f"minicode team: {task[:60]}"
                 )
             except Exception as exc:
+                self._completion_error = (
+                    f"isolated team commit failed: {exc}; "
+                    f"branch={handle.branch}, path={handle.path}"
+                )
                 return f"Agent Team commit failed: {exc}\npath: {handle.path}"
+
+        if passed and verification is not None and verification.passed:
+            self._completion_error = None
+        elif passed and verification is None:
+            self._completion_error = None
 
         lines = [
             f"[Agent Team: {len(results)}/{len(self.TEAM_ROLES)} steps, isolated]\n"

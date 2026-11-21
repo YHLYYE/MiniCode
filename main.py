@@ -158,6 +158,16 @@ def _build_tools(mode: str, config: Config, inject_memory: bool = True,
     return tools, system_prompt, exec_mode, memory_manager, system_prompt_for
 
 
+def _make_subagent_verifier_factory(verify_command, verify_timeout):
+    if not verify_command:
+        return None
+    return lambda root: CommandVerifier(
+        verify_command,
+        cwd=root,
+        timeout_seconds=verify_timeout,
+    )
+
+
 @click.command()
 @click.argument("task", required=False)
 @click.option("--mode", type=click.Choice(["plan", "normal"]), default="normal",
@@ -212,13 +222,8 @@ def main(task: str | None, mode: str, max_turns: int, max_cost: float,
     system_prompt_factory) = _build_tools(
         mode, config, inject_memory=not no_memory_inject,
         isolate_subagents=isolate_subagents,
-        subagent_verifier_factory=(
-            lambda root: CommandVerifier(
-                verify_command,
-                cwd=root,
-                timeout_seconds=verify_timeout,
-            )
-            if verify_command else None
+        subagent_verifier_factory=_make_subagent_verifier_factory(
+            verify_command, verify_timeout
         ),
     )
 

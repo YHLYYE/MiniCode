@@ -88,5 +88,19 @@ class WorktreeManager:
         )
         return [line for line in raw.splitlines() if line.strip()]
 
+    def working_tree_status(self, handle: WorktreeHandle) -> str:
+        return self._git("status", "--short", cwd=handle.path)
+
+    def working_tree_changed_files(self, handle: WorktreeHandle) -> list[str]:
+        raw = self.working_tree_status(handle)
+        files = []
+        for line in raw.splitlines():
+            path = line[3:].strip()
+            if " -> " in path:
+                path = path.split(" -> ", 1)[1]
+            if path:
+                files.append(path)
+        return files
+
     def remove(self, handle: WorktreeHandle) -> None:
         self._git("worktree", "remove", "--force", str(handle.path))

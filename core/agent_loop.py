@@ -387,6 +387,36 @@ class AgentLoop:
 
             # ── 5. No tool calls → task complete ──
             if not tool_calls and assistant_text:
+                tool_blocker = self._tool_completion_blocker()
+                if tool_blocker:
+                    if self._verification_failures < self._verify_retries:
+                        self._verification_failures += 1
+                        self._state = self._state.add_message(Message(
+                            role="user",
+                            content=(
+                                "[Sub-agent verification failed]\n"
+                                f"{tool_blocker}\n"
+                                "请处理失败的隔离任务，或重新执行并通过验收。"
+                            ),
+                        ))
+                        self._state = self._state.with_transition(
+                            ContinueReason.VERIFICATION_RETRY
+                        )
+                        yield RecoveryNotice(
+                            ContinueReason.VERIFICATION_RETRY,
+                            "隔离子任务未通过验收，主任务不能结束",
+                        )
+                        continue
+                    self._state = self._state.with_field(
+                        transition=None,
+                        termination_reason=TerminationReason.VERIFY_FAILED,
+                    )
+                    await self._record_task_done(
+                        "terminated: sub-agent verification failed"
+                    )
+                    yield DoneEvent(self._state)
+                    return
+
                 if self._verifier is not None:
                     verification = await self._verifier.verify()
                     if not verification.passed:
@@ -596,6 +626,19 @@ class AgentLoop:
         )
         await self._record_task_done("terminated: max_turns")
         yield DoneEvent(self._state)
+
+    def _tool_completion_blocker(self) -> str | None:
+        for tool in self._tools.values():
+            getter = getattr(tool, "completion_blocker", None)
+            if not callable(getter):
+                continue
+            try:
+                blocker = getter()
+            except Exception as exc:
+                return f"{tool.name}: blocker check failed: {exc}"
+            if blocker:
+                return str(blocker)
+        return None
 
     async def _handle_max_tokens(self) -> bool:
         """Recovery path: output token limit hit.

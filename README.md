@@ -2,7 +2,7 @@
 
 > Reference: Claude Code architecture (reverse-engineered from how-claude-code-works),
 > implemented in **~4,850 lines of pure Python** with **zero LangChain dependency**.
-> 279 unit tests (1 skipped), all passing.
+> 283 unit tests (1 skipped), all passing.
 
 A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill routing**,
 **3-tier Memory system**, **3-tier Context Compression with measurable benchmarks**,
@@ -156,7 +156,7 @@ commit.
 
 ```bash
 python -m pytest tests/ -v
-# 279 collected: 278 passed, 1 skipped
+# 283 collected: 282 passed, 1 skipped
 ```
 
 ---
@@ -194,7 +194,7 @@ minicode/
 ├── skills/                     # Skill definitions (markdown)
 │   └── code_review.md          # Example skill
 │
-└── tests/                      # 279 unit tests
+└── tests/                      # 283 unit tests
 ```
 
 ---

@@ -53,3 +53,8 @@ def test_build_tools_wires_subagent_isolation(monkeypatch, tmp_path):
     assert agent_tool._worktree_manager is not None
     assert agent_tool._workspace_tool_factory is not None
     assert agent_tool._verifier_factory is not None
+
+
+def test_subagent_verifier_factory_is_none_without_command():
+    assert main_module._make_subagent_verifier_factory(None, 120) is None
+    assert main_module._make_subagent_verifier_factory("", 120) is None
