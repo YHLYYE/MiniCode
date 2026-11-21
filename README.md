@@ -1,7 +1,7 @@
 # MiniCode — AI Coding Agent Built From Scratch
 
 > Reference: Claude Code architecture (reverse-engineered from how-claude-code-works),
-> implemented in **~4,850 lines of pure Python** with **zero LangChain dependency**.
+> implemented in **~7,350 lines of pure Python** with **zero LangChain dependency**.
 > 344 tests (1 skipped), all passing.
 
 A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill routing**,
@@ -293,7 +293,7 @@ minicode/
 
 | Decision | Rationale | Trade-off |
 |----------|-----------|-----------|
-| **No LangChain** | 4,850 lines > 50K framework; every line is traceable | No automatic integration with LangSmith |
+| **No LangChain** | 7,350 lines > 50K framework; every line is traceable | No automatic integration with LangSmith |
 | **Lexical BM25 memory recall** | Code fields (paths, errors, function names) are mostly literal; BM25 avoids request-time model cost and nondeterminism | No semantic recall — conditional reranking remains a measured extension |
 | **Rule-based Collapse/Autocompact summaries** | Context is already full when compression triggers — can't call LLM | Lower summary quality than LLM-generated |
 | **State machine is *inside* while-true** | Model is sole decision-maker, not a programmer-defined FSM | Can't predict which path the agent will take, harder to debug |
