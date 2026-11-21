@@ -2,7 +2,7 @@
 
 > Reference: Claude Code architecture (reverse-engineered from how-claude-code-works),
 > implemented in **~4,850 lines of pure Python** with **zero LangChain dependency**.
-> 294 unit tests (1 skipped), all passing.
+> 300 unit tests (1 skipped), all passing.
 
 A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill routing**,
 **3-tier Memory system**, **3-tier Context Compression with measurable benchmarks**,
@@ -130,6 +130,9 @@ python main.py "Fix the tests" --verify-command "python -m pytest -q"
 
 # Optional: write-capable sub-agents run in isolated Git worktrees
 python main.py "Implement the feature" --isolate-subagents
+
+# Optional: run every Bash call in a constrained Docker container
+python main.py "Run the tests" --sandbox-bash --sandbox-image alpine:3.20
 ```
 
 ### Available Tools (13 + 3 optional Worktree lifecycle tools)
@@ -174,6 +177,21 @@ is stored in `.minicode/worktrees/index.json` under a cross-process lock; corrup
 indexes fail closed. Apply refuses to start while a merge/rebase/cherry-pick is
 already in progress.
 
+### Docker Bash sandbox
+
+`--sandbox-bash` replaces the host Bash tool with `DockerBashTool`:
+
+- only the current workspace is mounted writable at `/workspace`;
+- container root filesystem is read-only;
+- `/tmp` is a bounded `tmpfs`;
+- network defaults to `none`;
+- CPU, memory and PID limits are enforced;
+- capabilities are dropped and `no-new-privileges` is set;
+- timeout kills the Docker client and force-removes the named container.
+
+The default image is `alpine:3.20`. For a project requiring Python, pass an image
+that contains the required runtime, for example `--sandbox-image python:3.12-slim`.
+
 ### Execution Modes
 
 - **Normal**: Full tool access
@@ -185,7 +203,7 @@ already in progress.
 
 ```bash
 python -m pytest tests/ -v
-# 294 collected: 293 passed, 1 skipped
+# 300 collected: 299 passed, 1 skipped
 ```
 
 ---
@@ -223,7 +241,7 @@ minicode/
 ├── skills/                     # Skill definitions (markdown)
 │   └── code_review.md          # Example skill
 │
-└── tests/                      # 294 unit tests
+└── tests/                      # 300 unit tests
 ```
 
 ---

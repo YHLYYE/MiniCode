@@ -84,7 +84,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 294 个测试
+└── tests/                     # 300 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -530,6 +530,21 @@ class BashTool(Tool):
         return (stdout.decode("utf-8", errors="replace") +
                 stderr.decode("utf-8", errors="replace"))
 ```
+
+### 3.5 可选 Docker Bash 沙箱
+
+`--sandbox-bash` 把 Bash 放到 Docker 中：
+
+- 只把当前工作区 bind mount 到 `/workspace`；
+- 根文件系统只读，`/tmp` 使用有大小上限的 `tmpfs`；
+- 默认 `--network none`；
+- 限制内存、CPU 和 PID 数；
+- 使用 `--cap-drop ALL` 与 `no-new-privileges`；
+- 超时强删命名容器，避免后台残留。
+
+默认镜像 `alpine:3.20` 只适合通用 shell 操作；项目需要 Python/Node 等运行时，
+必须通过 `--sandbox-image` 指定包含对应依赖的镜像。Docker 不可用时工具返回失败，
+不会静默回退到宿主 Bash。
 
 ---
 

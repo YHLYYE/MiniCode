@@ -35,7 +35,8 @@ python main.py --resume <session_id>  # resume a saved session
 All three must pass before a change is worth reviewing:
 
 ```bash
-python -m pytest tests/ -q              # 294 tests
+python -m pytest tests/ -q              # 300 tests
+python -m pytest tests/test_docker_sandbox.py -q  # skipped without Docker
 python -m benchmarks.verification_worktree_bench --output artifacts
 python -m pyflakes $(git ls-files '*.py')   # undefined names / unused imports
 python benchmarks/verify_claims.py      # 14 documented claims, re-measured
