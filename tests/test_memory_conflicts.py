@@ -1,6 +1,13 @@
 import sqlite3
 
-from capabilities.memory import MemoryEntry, MemoryType, SQLiteMemoryStore
+import pytest
+
+from capabilities.memory import (
+    MemoryEntry,
+    MemoryManager,
+    MemoryType,
+    SQLiteMemoryStore,
+)
 
 
 def test_old_sqlite_rows_migrate_with_safe_defaults(tmp_path):
@@ -47,3 +54,63 @@ def test_memory_entry_metadata_round_trip():
     assert restored.conflict_group == "cg_1"
     assert restored.success_count == 2
     assert restored.failure_count == 1
+
+
+@pytest.mark.asyncio
+async def test_current_task_memory_is_not_automatically_injected(tmp_path):
+    mm = MemoryManager(project_root=tmp_path)
+    await mm.record_procedural(
+        "本次任务的临时路径 /tmp/build",
+        scope="current_task",
+        source="task_log",
+    )
+
+    assert mm.search_sync("临时路径 build", scope="persistent") == []
+    assert any(
+        entry.scope == "current_task"
+        for entry in mm.search_sync("临时路径 build")
+    )
+
+
+@pytest.mark.asyncio
+async def test_new_user_correction_supersedes_old_rule(tmp_path):
+    store = SQLiteMemoryStore(tmp_path / "mem.sqlite")
+    mm = MemoryManager(project_root=tmp_path, store=store)
+    old = await mm.record_procedural(
+        "用户纠正：使用 Tab 缩进",
+        source="user_correction",
+        evidence_level="user",
+        subject_key="indent_style",
+    )
+    new = await mm.record_procedural(
+        "用户纠正：使用 4 个空格缩进",
+        source="user_correction",
+        evidence_level="user",
+        subject_key="indent_style",
+    )
+
+    assert store.get(old.id).status == "superseded"
+    assert store.get(new.id).status == "active"
+    assert store.get(new.id).supersedes_id == old.id
+
+
+@pytest.mark.asyncio
+async def test_uncertain_same_subject_entries_are_marked_conflicted(tmp_path):
+    store = SQLiteMemoryStore(tmp_path / "mem.sqlite")
+    mm = MemoryManager(project_root=tmp_path, store=store)
+    first = await mm.record_procedural(
+        "提交前先跑 pytest",
+        subject_key="pre_commit_test",
+        source="verified_fix",
+        evidence_level="verified",
+    )
+    second = await mm.record_procedural(
+        "提交前不用跑 pytest，CI 会跑",
+        subject_key="pre_commit_test",
+        source="observed",
+        evidence_level="observed",
+    )
+
+    assert store.get(first.id).status == "conflicted"
+    assert store.get(second.id).status == "conflicted"
+    assert store.get(first.id).conflict_group == store.get(second.id).conflict_group

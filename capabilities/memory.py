@@ -548,8 +548,21 @@ class MemoryStore(ABC):
         """Persist a memory entry."""
 
     @abstractmethod
+    def get(self, entry_id: str) -> MemoryEntry | None:
+        """Read one entry by id."""
+
+    @abstractmethod
+    def list_entries(self, memory_type: MemoryType | None = None) -> list[MemoryEntry]:
+        """List entries for deterministic relation checks."""
+
+    @abstractmethod
+    def update_metadata(self, entry_id: str, **changes) -> None:
+        """Update governance metadata without changing content."""
+
+    @abstractmethod
     def search(self, memory_type: MemoryType | None, query: str,
-               top_k: int) -> list[MemoryEntry]:
+               top_k: int, min_similarity: float | None = None,
+               scope: str | None = None) -> list[MemoryEntry]:
         """Search memories, optionally filtered by type."""
 
     @abstractmethod
@@ -605,26 +618,64 @@ class JSONMemoryStore(MemoryStore):
                 return
         self._store_json_list(path, _entry_to_dict(entry))
 
+    def get(self, entry_id: str) -> MemoryEntry | None:
+        for entry in self.list_entries():
+            if entry.id == entry_id:
+                return entry
+        return None
+
+    def list_entries(self, memory_type: MemoryType | None = None) -> list[MemoryEntry]:
+        if memory_type == MemoryType.USER_PROFILE:
+            return [
+                MemoryEntry.make(MemoryType.USER_PROFILE, value, context=key)
+                for key, value in self._load_profile().items()
+            ]
+        paths = (
+            (self._procedural_path, MemoryType.PROCEDURAL),
+            (self._episodic_path, MemoryType.EPISODIC),
+        )
+        entries = [
+            _dict_to_entry(item)
+            for path, entry_type in paths
+            if memory_type is None or memory_type == entry_type
+            for item in self._load_json_list(path)
+        ]
+        return entries
+
+    def update_metadata(self, entry_id: str, **changes) -> None:
+        allowed = {
+            "status", "conflict_group", "supersedes_id", "success_count",
+            "failure_count", "timestamp", "success",
+        }
+        for path in (self._procedural_path, self._episodic_path):
+            entries = self._load_json_list(path)
+            for item in entries:
+                if item.get("id") == entry_id:
+                    item.update({k: v for k, v in changes.items() if k in allowed})
+                    self._write_json_list(path, entries)
+                    return
+
     def _write_json_list(self, path: Path, entries: list[dict]) -> None:
         self._dir.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(entries[-self._max_entries:], ensure_ascii=False, indent=2),
                         encoding="utf-8")
 
     def search(self, memory_type: MemoryType | None, query: str,
-               top_k: int, min_similarity: float | None = None) -> list[MemoryEntry]:
+               top_k: int, min_similarity: float | None = None,
+               scope: str | None = None) -> list[MemoryEntry]:
         if memory_type == MemoryType.USER_PROFILE:
             return self._search_profile(query)
         if memory_type == MemoryType.PROCEDURAL:
-            return self._search_procedural(query, top_k)
+            return self._search_procedural(query, top_k, scope=scope)
         if memory_type == MemoryType.EPISODIC:
-            return self._search_episodic(query, top_k, min_similarity)
+            return self._search_episodic(query, top_k, min_similarity, scope=scope)
         # 无类型过滤 → 三类各出一份排名再**按名次融合**（不比原始分：余弦有界、
         # BM25 无界）。以前是三类直接拼接，等于情景永远压过程序性。
         strict = min_similarity is not None
         return _merge_by_rank([
             self._search_profile(query),      # 画像：key 命中，最可靠，放最前
-            self._search_procedural(query, top_k, strict=strict),   # 程序性：可照做的经验
-            self._search_episodic(query, top_k, min_similarity),    # 情景：任务日志，最后
+            self._search_procedural(query, top_k, strict=strict, scope=scope),
+            self._search_episodic(query, top_k, min_similarity, scope=scope),
         ], top_k)
 
     def set_profile(self, key: str, value: str) -> None:
@@ -683,15 +734,21 @@ class JSONMemoryStore(MemoryStore):
     # ── Search backends ──
 
     def _search_procedural(self, query: str, top_k: int,
-                           strict: bool = False) -> list[MemoryEntry]:
+                           strict: bool = False,
+                           scope: str | None = None) -> list[MemoryEntry]:
         entries = self._load_json_list(self._procedural_path)
+        if scope is not None:
+            entries = [e for e in entries if e.get("scope", "persistent") == scope]
         return [_dict_to_entry(e)
                 for e in _rank_procedural(entries, query, top_k,
                                           min_matches=2 if strict else 1)]
 
     def _search_episodic(self, query: str, top_k: int,
-                         min_similarity: float | None = None) -> list[MemoryEntry]:
+                         min_similarity: float | None = None,
+                         scope: str | None = None) -> list[MemoryEntry]:
         entries = self._load_json_list(self._episodic_path)
+        if scope is not None:
+            entries = [e for e in entries if e.get("scope", "persistent") == scope]
         if not entries:
             return []
         return [_dict_to_entry(e)
@@ -874,18 +931,65 @@ class SQLiteMemoryStore(MemoryStore):
             self._prune(entry.memory_type)
             self._conn.commit()
 
+    def get(self, entry_id: str) -> MemoryEntry | None:
+        for entry in self.list_entries():
+            if entry.id == entry_id:
+                return entry
+        return None
+
+    def list_entries(self, memory_type: MemoryType | None = None) -> list[MemoryEntry]:
+        if memory_type == MemoryType.USER_PROFILE:
+            return [
+                MemoryEntry.make(MemoryType.USER_PROFILE, value, context=key)
+                for key, value in self._load_profile().items()
+            ]
+        types = (
+            (MemoryType.PROCEDURAL, MemoryType.EPISODIC)
+            if memory_type is None else (memory_type,)
+        )
+        return [
+            _dict_to_entry(item)
+            for entry_type in types
+            for item in self._load_type(entry_type)
+        ]
+
+    def update_metadata(self, entry_id: str, **changes) -> None:
+        allowed = {
+            "status", "conflict_group", "supersedes_id", "success_count",
+            "failure_count", "timestamp", "success",
+        }
+        updates = {k: v for k, v in changes.items() if k in allowed}
+        if not updates:
+            return
+        assignments = ", ".join(f"{key} = ?" for key in updates)
+        values = [
+            (1 if value else 0) if key == "success" else value
+            for key, value in updates.items()
+        ]
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE memories SET {assignments} WHERE id = ?",
+                (*values, entry_id),
+            )
+            self._conn.commit()
+
     def search(self, memory_type: MemoryType | None, query: str,
-               top_k: int, min_similarity: float | None = None) -> list[MemoryEntry]:
+               top_k: int, min_similarity: float | None = None,
+               scope: str | None = None) -> list[MemoryEntry]:
         if memory_type == MemoryType.USER_PROFILE:
             return self._search_profile(query)
         if memory_type == MemoryType.PROCEDURAL:
             entries = self._load_type(MemoryType.PROCEDURAL)
+            if scope is not None:
+                entries = [e for e in entries if e.get("scope", "persistent") == scope]
             return [_dict_to_entry(e)
                     for e in _rank_procedural(
                         entries, query, top_k,
                         min_matches=2 if min_similarity is not None else 1)]
         if memory_type == MemoryType.EPISODIC:
             entries = self._load_type(MemoryType.EPISODIC)
+            if scope is not None:
+                entries = [e for e in entries if e.get("scope", "persistent") == scope]
             return [_dict_to_entry(e)
                     for e in _rank_episodic(entries, query, top_k,
                                             min_similarity)]
@@ -895,14 +999,19 @@ class SQLiteMemoryStore(MemoryStore):
         #      （实测 top1 只有 0.27），又让返回条数最多到 2~3 倍 top_k。
         # 两类现在都用 BM25；但"名次融合"仍比分数更稳（不受候选规模与 top_k 影响）。
         strict = min_similarity is not None
+        procedural = self._load_type(MemoryType.PROCEDURAL)
+        episodic = self._load_type(MemoryType.EPISODIC)
+        if scope is not None:
+            procedural = [e for e in procedural if e.get("scope", "persistent") == scope]
+            episodic = [e for e in episodic if e.get("scope", "persistent") == scope]
         return _merge_by_rank([
             self._search_profile(query),          # 画像：key 命中，最可靠，放最前
             [_dict_to_entry(e)
-             for e in _rank_procedural(self._load_type(MemoryType.PROCEDURAL),
+             for e in _rank_procedural(procedural,
                                        query, top_k,
                                        min_matches=2 if strict else 1)],   # 程序性：可照做
             [_dict_to_entry(e)
-             for e in _rank_episodic(self._load_type(MemoryType.EPISODIC),
+             for e in _rank_episodic(episodic,
                                      query, top_k, min_similarity)],        # 情景：日志
         ], top_k)
 
@@ -1096,24 +1205,85 @@ class MemoryManager:
 
     # ── Entry-level memory (delegated to store) ──
 
-    async def record_procedural(self, pattern: str, context: str = "") -> MemoryEntry:
-        entry = MemoryEntry.make(
-            MemoryType.PROCEDURAL, pattern,
-            context=context, tags=["procedural", "pattern"],
+    async def _add_entry(self, entry: MemoryEntry) -> MemoryEntry:
+        existing = await asyncio.to_thread(
+            self._store.list_entries, entry.memory_type
         )
+        same_topic = [
+            item for item in existing
+            if item.scope == entry.scope
+            and item.subject_key == entry.subject_key
+            and item.subject_key
+            and item.status != "superseded"
+            and _fingerprint(item.content) != _fingerprint(entry.content)
+        ]
+        if same_topic:
+            if entry.source == "user_correction":
+                for item in same_topic:
+                    await asyncio.to_thread(
+                        self._store.update_metadata,
+                        item.id,
+                        status="superseded",
+                    )
+                newest = max(same_topic, key=lambda item: item.timestamp)
+                entry.supersedes_id = newest.id
+            else:
+                group = next(
+                    (item.conflict_group for item in same_topic if item.conflict_group),
+                    f"cg_{time.time_ns()}",
+                )
+                entry.status = "conflicted"
+                entry.conflict_group = group
+                for item in same_topic:
+                    await asyncio.to_thread(
+                        self._store.update_metadata,
+                        item.id,
+                        status="conflicted",
+                        conflict_group=group,
+                    )
         await asyncio.to_thread(self._store.add, entry)
         return entry
 
-    async def record_episodic(self, event: str, file_paths: list[str] | None = None,
-                              success: bool = True,
-                              tags: list[str] | None = None) -> MemoryEntry:
+    async def record_procedural(
+        self,
+        pattern: str,
+        context: str = "",
+        *,
+        scope: str = "persistent",
+        source: str = "observed",
+        evidence_level: str = "observed",
+        subject_key: str = "",
+        status: str = "active",
+    ) -> MemoryEntry:
+        entry = MemoryEntry.make(
+            MemoryType.PROCEDURAL, pattern,
+            context=context, tags=["procedural", "pattern"],
+            scope=scope, source=source, evidence_level=evidence_level,
+            subject_key=subject_key, status=status,
+        )
+        return await self._add_entry(entry)
+
+    async def record_episodic(
+        self,
+        event: str,
+        file_paths: list[str] | None = None,
+        success: bool = True,
+        tags: list[str] | None = None,
+        *,
+        scope: str = "persistent",
+        source: str = "observed",
+        evidence_level: str = "observed",
+        subject_key: str = "",
+        status: str = "active",
+    ) -> MemoryEntry:
         entry = MemoryEntry.make(
             MemoryType.EPISODIC, event,
             file_paths=file_paths or [], tags=tags or ["episodic"],
-            success=success,
+            success=success, scope=scope, source=source,
+            evidence_level=evidence_level, subject_key=subject_key,
+            status=status,
         )
-        await asyncio.to_thread(self._store.add, entry)
-        return entry
+        return await self._add_entry(entry)
 
     async def record_user_profile(self, key: str, value: str) -> MemoryEntry:
         entry = MemoryEntry.make(
@@ -1138,21 +1308,26 @@ class MemoryManager:
 
     async def search(self, query: str, top_k: int = 5,
                      memory_type: MemoryType | None = None,
-                     min_similarity: float | None = None) -> list[MemoryEntry]:
+                     min_similarity: float | None = None,
+                     scope: str | None = None) -> list[MemoryEntry]:
         return await asyncio.to_thread(
-            self._store.search, memory_type, query, top_k, min_similarity
+            self._store.search, memory_type, query, top_k,
+            min_similarity, scope,
         )
 
     def search_sync(self, query: str, top_k: int = 5,
                     memory_type: MemoryType | None = None,
-                    min_similarity: float | None = None) -> list[MemoryEntry]:
+                    min_similarity: float | None = None,
+                    scope: str | None = None) -> list[MemoryEntry]:
         """同步版检索 —— 给"同步的提示词组装"用。
 
         为什么要有它：`search()` 是 async（内部套了 asyncio.to_thread），而系统提示词的
         组装（main.py 的 system_prompt_for）是同步函数。底层 store.search 本来就是同步的，
         所以这里直接调它 —— 不必为了注入记忆把整条提示词工厂改成异步。
         """
-        return self._store.search(memory_type, query, top_k, min_similarity)
+        return self._store.search(
+            memory_type, query, top_k, min_similarity, scope
+        )
 
     def close(self) -> None:
         """Release the underlying store's resources (e.g. SQLite connection)."""
