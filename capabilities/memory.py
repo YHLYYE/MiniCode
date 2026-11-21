@@ -31,6 +31,7 @@ import re
 import sqlite3
 import threading
 import time
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -147,7 +148,7 @@ class MemoryEntry:
 
     @classmethod
     def make(cls, memory_type: MemoryType, content: str, **kwargs) -> "MemoryEntry":
-        kwargs.setdefault("id", f"{memory_type.value}_{int(time.time() * 1000)}")
+        kwargs.setdefault("id", f"{memory_type.value}_{uuid.uuid4().hex[:12]}")
         kwargs.setdefault("timestamp", time.time())
         return cls(
             memory_type=memory_type,
@@ -698,7 +699,10 @@ class JSONMemoryStore(MemoryStore):
             json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def bump(self, ids: list[str], field: str, delta: int = 1) -> int:
-        if field not in ("hit_count", "retrieval_count", "adoption_count"):
+        if field not in (
+            "hit_count", "retrieval_count", "adoption_count",
+            "success_count", "failure_count",
+        ):
             raise ValueError(f"未知计数器：{field}")
         wanted, changed = set(ids), 0
         if not wanted:
@@ -1032,7 +1036,10 @@ class SQLiteMemoryStore(MemoryStore):
             self._conn.commit()
 
     def bump(self, ids: list[str], field: str, delta: int = 1) -> int:
-        if field not in ("hit_count", "retrieval_count", "adoption_count"):
+        if field not in (
+            "hit_count", "retrieval_count", "adoption_count",
+            "success_count", "failure_count",
+        ):
             raise ValueError(f"未知计数器：{field}")
         if not ids:
             return 0
@@ -1158,16 +1165,12 @@ class MemoryManager:
         return self._store.bump(ids, "retrieval_count", 1)
 
     def record_task_outcome(self, success: bool) -> int:
-        """任务结束结算：注入过的记忆按结果 +1 / −1（adoption_count）。
-
-        "被采纳"用的是可观测代理，而不是让模型自评：本轮注入过这条记忆，
-        且本轮**没有工具错误**、任务正常结束 → 记一次有用；出现过工具错误 → 记 −1。
-        结算一次就清空，避免同一个任务重复记账。
-        """
+        """Settle injected memories against the explicit terminal outcome."""
         ids, self._last_injected = self._last_injected, []
         if not ids:
             return 0
-        return self._store.bump(ids, "adoption_count", 1 if success else -1)
+        field = "success_count" if success else "failure_count"
+        return self._store.bump(ids, field, 1)
 
     # ── Session-level context ──
 
@@ -1309,7 +1312,12 @@ class MemoryManager:
         token 又容易过时，全文另有 ContextCompressor 的 record_edit 负责回灌。
         （原来签名里还挂着 old/new 两个参数，但从未被使用，调用方传的是空串 —— 已删除。）
         """
-        await self.record_episodic(f"Edited {file_path}", file_paths=[file_path])
+        await self.record_episodic(
+            f"Edited {file_path}",
+            file_paths=[file_path],
+            scope="current_task",
+            source="task_log",
+        )
 
     # ── Search ──
 

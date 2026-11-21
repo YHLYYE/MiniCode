@@ -210,7 +210,11 @@ class AgentLoop:
         if not any(marker in text for marker in self._CORRECTION_MARKERS):
             return
         await self._memory.record_procedural(
-            f"用户纠正：{text}", context="user_correction")
+            f"用户纠正：{text}",
+            context="user_correction",
+            source="user_correction",
+            evidence_level="user",
+        )
 
     async def _query_loop(self, state: LoopState):
         """Inner loop: per-turn execution with 4 recovery paths."""
@@ -332,7 +336,9 @@ class AgentLoop:
                     self._state = self._state.with_field(
                         termination_reason=TerminationReason.MAX_OUTPUT_TOKENS
                     )
-                    await self._record_task_done("terminated: max_tokens")
+                    await self._record_task_done(
+                        "terminated: max_tokens", success=False
+                    )
                     yield DoneEvent(self._state)
                     return
                 yield RecoveryNotice(
@@ -383,7 +389,9 @@ class AgentLoop:
                 self._state = self._state.with_field(
                     termination_reason=TerminationReason.EMPTY_RESPONSE
                 )
-                await self._record_task_done("terminated: empty response")
+                await self._record_task_done(
+                    "terminated: empty response", success=False
+                )
                 yield DoneEvent(self._state)
                 return
 
@@ -414,7 +422,8 @@ class AgentLoop:
                         termination_reason=TerminationReason.VERIFY_FAILED,
                     )
                     await self._record_task_done(
-                        "terminated: sub-agent verification failed"
+                        "terminated: sub-agent verification failed",
+                        success=False,
                     )
                     yield DoneEvent(self._state)
                     return
@@ -448,7 +457,8 @@ class AgentLoop:
                             termination_reason=TerminationReason.VERIFY_FAILED,
                         )
                         await self._record_task_done(
-                            "terminated: verification failed"
+                            "terminated: verification failed",
+                            success=False,
                         )
                         yield DoneEvent(self._state)
                         return
@@ -456,7 +466,7 @@ class AgentLoop:
                     transition=None,
                     termination_reason=TerminationReason.COMPLETED,
                 )
-                await self._record_task_done(assistant_text[:300])
+                await self._record_task_done(assistant_text[:300], success=True)
                 yield DoneEvent(self._state)
                 return
 
@@ -602,6 +612,8 @@ class AgentLoop:
                     await self._memory.record_episodic(
                         f"Tool errors:\n{error_lines[:500]}",
                         tags=["error"],
+                        scope="current_task",
+                        source="task_log",
                     )
                 recovery_msg = Message(
                     role="user",
@@ -628,7 +640,9 @@ class AgentLoop:
         self._state = self._state.with_field(
             termination_reason=TerminationReason.MAX_TURNS
         )
-        await self._record_task_done("terminated: max_turns")
+        await self._record_task_done(
+            "terminated: max_turns", success=False
+        )
         yield DoneEvent(self._state)
 
     def _tool_completion_blocker(self) -> str | None:
@@ -697,7 +711,9 @@ class AgentLoop:
             return None
         return estimator(usage.input_tokens, usage.output_tokens)
 
-    async def _record_task_done(self, note: str = "") -> None:
+    async def _record_task_done(
+        self, note: str = "", *, success: bool
+    ) -> None:
         """Persist a task-completion event to episodic memory.
 
         Called at every DoneEvent site so memory holds a session-level
@@ -711,15 +727,18 @@ class AgentLoop:
             f"Task: {task} | {self._state.turn_count} turns | "
             f"{self._state.total_tokens} tokens{suffix}",
             tags=["task_summary"],
+            scope="current_task",
+            source="task_log",
         )
         # 先取一次"本轮有没有出错"：下面的提炼会把 _task_errors 清空，
         # 结算 adoption 需要的是**结算前**的事实。
-        had_errors = bool(self._task_errors)
         await self._distill_fix()
         outcome = getattr(self._memory, "record_task_outcome", None)
         if callable(outcome):
-            # 注入过的记忆按本轮结局记 +1 / −1（可观测代理，见 MemoryManager）
-            outcome(success=not had_errors)
+            try:
+                outcome(success=success)
+            except Exception:
+                pass
 
     def _note_possible_fix(self, tool_name: str, file_path: str, result: str) -> None:
         """记下"出错之后第一次成功的编辑"——它是提炼经验的修法证据。
@@ -747,6 +766,8 @@ class AgentLoop:
         await self._memory.record_procedural(
             f"{first.tool_name} 报错「{first.error[:120]}」→ 修法：{self._fix_evidence}",
             context=self._current_task or "",
+            source="verified_fix",
+            evidence_level="verified",
         )
         # 记过一次就清空，避免同一个 DoneEvent 站点重复写（写入口还有指纹去重兜底）
         self._task_errors = []

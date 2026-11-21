@@ -159,3 +159,25 @@ def test_conflicted_memory_hint_is_labeled():
 
     assert "[存在冲突]" in hint
     assert "历史记录，仅供参考" in hint
+
+
+@pytest.mark.asyncio
+async def test_verified_success_increments_success_count(tmp_path):
+    mm = MemoryManager(project_root=tmp_path)
+    entry = await mm.record_procedural("修复 NPE", subject_key="npe")
+
+    mm.record_injection([entry])
+    mm.record_task_outcome(success=True)
+
+    assert mm.search_sync("修复 NPE", top_k=1)[0].success_count == 1
+
+
+@pytest.mark.asyncio
+async def test_terminal_failure_increments_failure_count(tmp_path):
+    mm = MemoryManager(project_root=tmp_path)
+    entry = await mm.record_procedural("修复 NPE", subject_key="npe")
+
+    mm.record_injection([entry])
+    mm.record_task_outcome(success=False)
+
+    assert mm.search_sync("修复 NPE", top_k=1)[0].failure_count == 1

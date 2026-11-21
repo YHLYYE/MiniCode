@@ -364,11 +364,11 @@ async def test_empty_query_does_not_return_every_profile(tmp_path, backend):
 
 # ── 三个计数器：写入 / 被检索命中 / 被采纳 ──
 # 回归背景：原来只有一个 hit_count，记的是"被写进来几次"（去重用）——
-# 回答不了"这条经验有没有被用上"。注入时记 retrieval，任务结束时按结局记 adoption。
+# 回答不了"这条经验有没有被用上"。注入时记 retrieval，任务结束时按结局记成功/失败。
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ["sqlite", "json"])
-async def test_retrieval_and_adoption_counters(tmp_path, backend):
+async def test_retrieval_and_outcome_counters(tmp_path, backend):
     store = (None if backend == "sqlite"
              else JSONMemoryStore(tmp_path / "json_memories"))
     mm = MemoryManager(project_root=tmp_path, store=store)
@@ -378,21 +378,23 @@ async def test_retrieval_and_adoption_counters(tmp_path, backend):
     assert hits, "检索不到就没法测计数"
     assert mm.record_injection(hits) == len(hits)      # retrieval_count +1
 
-    # 任务成功结束 → 注入过的记忆记一次"有用"
+    # 任务成功结束 → 注入过的记忆记一次 success
     assert mm.record_task_outcome(success=True) == len(hits)
     entry = mm.search_sync("重建索引", top_k=3)[0]
     assert entry.retrieval_count == 1
-    assert entry.adoption_count == 1
+    assert entry.success_count == 1
+    assert entry.failure_count == 0
 
     # 同一个任务重复结算不许重复记账（批次已清空）
     assert mm.record_task_outcome(success=True) == 0
 
-    # 出错的任务：adoption 记 −1（"注入了但还是出错"是可观测的负面信号）
+    # 失败任务：failure_count +1
     mm.record_injection(mm.search_sync("重建索引", top_k=3))
     mm.record_task_outcome(success=False)
     entry2 = mm.search_sync("重建索引", top_k=3)[0]
     assert entry2.retrieval_count == 2
-    assert entry2.adoption_count == 0
+    assert entry2.success_count == 1
+    assert entry2.failure_count == 1
     mm.close()
 
 

@@ -368,6 +368,27 @@ async def test_memory_records_task_completion(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_completed_task_updates_injected_memory_success_count(tmp_path):
+    mm = MemoryManager(project_root=tmp_path)
+    memory = await mm.record_procedural("pytest pre commit check")
+    mm.record_injection([memory])
+    mock = MockModelAdapter([[make_text("All done."), make_stop("end_turn")]])
+
+    loop = AgentLoop(
+        tools=[MockTool()],
+        model_adapter=mock,
+        system_prompt="Test.",
+        memory_manager=mm,
+    )
+    async for _ in loop.run("Do a thing"):
+        pass
+
+    updated = mm.search_sync("pytest pre commit check", top_k=1)[0]
+    assert updated.success_count == 1
+    assert updated.failure_count == 0
+
+
+@pytest.mark.asyncio
 async def test_memory_records_tool_error(tmp_path):
     """Tool errors are persisted to episodic memory during recovery."""
     class FailingTool(Tool):
