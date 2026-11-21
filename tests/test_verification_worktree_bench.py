@@ -19,3 +19,9 @@ def test_verification_worktree_benchmark_reports_real_outcomes(tmp_path):
     assert report["summary"] == summary
     assert len(report["cases"]) == 4
     assert all(case["passed"] for case in report["cases"])
+    assert all("auto_merges" in case for case in report["cases"])
+    conflict = next(
+        case for case in report["cases"] if case["case_id"] == "conflict_rollback"
+    )
+    assert conflict["rollback_ok"] == 1
+    assert conflict["auto_merges"] == 0

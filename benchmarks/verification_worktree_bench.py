@@ -123,7 +123,7 @@ def _run_verified_and_apply(root: Path) -> dict:
     result = asyncio.run(tool.execute("verified change", agent_type="general"))
     entry = manager.list_entries()[0]
     mutations_before_apply = int((repo / "feature.txt").exists())
-    manager.apply(entry["branch"])
+    applied_commit = manager.apply(entry["branch"])
     return {
         "case_id": "verified_and_apply",
         "passed": (
@@ -134,7 +134,8 @@ def _run_verified_and_apply(root: Path) -> dict:
         ),
         "verified_commits": int(bool(entry["commit"])),
         "main_workspace_mutations_before_apply": mutations_before_apply,
-        "explicit_apply_count": 1,
+        "explicit_apply_count": int(bool(applied_commit)),
+        "auto_merges": 0,
     }
 
 
@@ -159,6 +160,8 @@ def _run_failed_verification(root: Path) -> dict:
             and tool.completion_blocker() is not None
         ),
         "preserved_uncommitted_worktree": int(entry["status"] == "verify_failed"),
+        "main_workspace_mutations_before_apply": 0,
+        "auto_merges": 0,
     }
 
 
@@ -218,6 +221,8 @@ def _run_parent_completion_gate(root: Path) -> dict:
         "false_completion_blocked": int(
             done.state.termination_reason == TerminationReason.VERIFY_FAILED
         ),
+        "main_workspace_mutations_before_apply": 0,
+        "auto_merges": 0,
     }
 
 
@@ -239,16 +244,19 @@ def _run_conflict_rollback(root: Path) -> dict:
     except RuntimeError:
         raised = True
     entry = manager.find(handle.branch)
+    rollback_ok = (
+        raised
+        and entry["status"] == "ready"
+        and handle.path.exists()
+        and _git(repo, "status", "--porcelain") == ""
+        and not (repo / ".git" / "CHERRY_PICK_HEAD").exists()
+    )
     return {
         "case_id": "conflict_rollback",
-        "passed": (
-            raised
-            and entry["status"] == "ready"
-            and handle.path.exists()
-            and _git(repo, "status", "--porcelain") == ""
-            and not (repo / ".git" / "CHERRY_PICK_HEAD").exists()
-        ),
-        "conflict_rollbacks": int(raised),
+        "passed": rollback_ok,
+        "rollback_ok": int(rollback_ok),
+        "main_workspace_mutations_before_apply": 0,
+        "auto_merges": 0 if rollback_ok else 1,
     }
 
 
@@ -277,9 +285,9 @@ def run_benchmark(output_dir: Path) -> dict:
             for case in cases
         ),
         "conflict_rollbacks": sum(
-            case.get("conflict_rollbacks", 0) for case in cases
+            case.get("rollback_ok", 0) for case in cases
         ),
-        "auto_merges": 0,
+        "auto_merges": sum(case.get("auto_merges", 0) for case in cases),
     }
     report = {"summary": summary, "cases": cases}
     (output_dir / "worktree_verification_bench.json").write_text(
