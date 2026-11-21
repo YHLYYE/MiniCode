@@ -1,6 +1,12 @@
 import pytest
 
-from capabilities.task_graph import TaskGraphError, TaskGraphStore
+from capabilities.task_graph import (
+    TaskCreateTool,
+    TaskGraphError,
+    TaskGraphStore,
+    TaskListTool,
+    TaskUpdateTool,
+)
 
 
 def test_create_task_persists_and_reloads(tmp_path):
@@ -64,3 +70,32 @@ def test_corrupt_task_file_fails_closed(tmp_path):
     with pytest.raises(TaskGraphError, match="corrupt"):
         store.create("不能覆盖")
     assert path.read_text(encoding="utf-8") == "{broken"
+
+
+@pytest.mark.asyncio
+async def test_tools_emit_canonical_snapshot(tmp_path):
+    store = TaskGraphStore(tmp_path)
+    created = await TaskCreateTool(store).execute(subject="实现工具")
+    task_id = created.splitlines()[0].split(":", 1)[1].strip()
+
+    listed = await TaskListTool(store).execute()
+    assert "## Task Graph" in listed
+    assert task_id in listed
+    assert "ready=1" in listed
+
+    updated = await TaskUpdateTool(store).execute(
+        task_id=task_id, status="in_progress"
+    )
+    assert "in_progress=1" in updated
+
+
+@pytest.mark.asyncio
+async def test_blocked_count_is_derived_from_dependencies(tmp_path):
+    store = TaskGraphStore(tmp_path)
+    first = store.create("第一步")
+    second = store.create("第二步", blocked_by=[first["id"]])
+
+    output = await TaskListTool(store).execute()
+
+    assert second["id"] in output
+    assert "blocked=1" in output

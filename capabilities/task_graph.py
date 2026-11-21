@@ -8,6 +8,8 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from core.tools.base import Tool
+
 
 class TaskGraphError(RuntimeError):
     """An invalid operation or unreadable task graph."""
@@ -98,6 +100,35 @@ class TaskGraphStore:
             self._save_unlocked(data)
             return dict(task)
 
+    def render_snapshot(self, include_completed: bool = False) -> str:
+        tasks = self.tasks()
+        by_id = {task["id"]: task for task in tasks}
+        visible = [
+            task for task in tasks
+            if include_completed or task["status"] != "completed"
+        ]
+        ready = sum(_readiness(task, by_id) == "ready" for task in tasks)
+        blocked = sum(_readiness(task, by_id) == "blocked" for task in tasks)
+        in_progress = sum(task["status"] == "in_progress" for task in tasks)
+        completed = sum(task["status"] == "completed" for task in tasks)
+
+        lines = ["## Task Graph"]
+        if not visible:
+            lines.append("- none")
+        for task in visible:
+            state = task["status"]
+            if state == "pending":
+                state = _readiness(task, by_id)
+            line = f"- {task['id']} [{state}] {task['subject']}"
+            if task.get("blocked_by"):
+                line += f" (blocked_by: {', '.join(task['blocked_by'])})"
+            lines.append(line)
+        lines.append(
+            f"counts: ready={ready} in_progress={in_progress} "
+            f"blocked={blocked} completed={completed}"
+        )
+        return "\n".join(lines)
+
     def _load_unlocked(self) -> dict:
         if not self.path.exists():
             return {"version": 1, "tasks": []}
@@ -183,4 +214,91 @@ def _unfinished_blockers(data: dict, task: dict) -> list[str]:
         for task_id in task.get("blocked_by", [])
         if by_id.get(task_id, {}).get("status") != "completed"
     ]
+
+
+def _readiness(task: dict, by_id: dict[str, dict]) -> str:
+    if task.get("status") != "pending":
+        return task.get("status", "pending")
+    blockers = [
+        task_id
+        for task_id in task.get("blocked_by", [])
+        if by_id.get(task_id, {}).get("status") != "completed"
+    ]
+    return "blocked" if blockers else "ready"
+
+
+class TaskCreateTool(Tool):
+    name = "TaskCreate"
+    description = (
+        "Create a persistent task. Dependencies must reference existing task IDs."
+    )
+    input_schema = {
+        "subject": {"type": "string", "description": "Short task title"},
+        "description": {"type": "string", "description": "Optional task details"},
+        "blocked_by": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Existing task IDs that must complete first",
+        },
+    }
+    is_readonly = False
+    is_concurrency_safe = False
+
+    def __init__(self, store: TaskGraphStore):
+        self.store = store
+
+    async def execute(
+        self,
+        subject: str,
+        description: str = "",
+        blocked_by: list[str] | None = None,
+    ) -> str:
+        task = self.store.create(subject, description, blocked_by)
+        return f"created: {task['id']}\n{self.store.render_snapshot()}"
+
+
+class TaskUpdateTool(Tool):
+    name = "TaskUpdate"
+    description = (
+        "Start or complete an existing task after validating dependencies and state."
+    )
+    input_schema = {
+        "task_id": {"type": "string", "description": "Task ID to update"},
+        "status": {
+            "type": "string",
+            "enum": ["in_progress", "completed"],
+            "description": "Target state",
+        },
+        "result": {"type": "string", "description": "Optional completion evidence"},
+    }
+    is_readonly = False
+    is_concurrency_safe = False
+
+    def __init__(self, store: TaskGraphStore):
+        self.store = store
+
+    async def execute(self, task_id: str, status: str, result: str = "") -> str:
+        self.store.update(task_id, status, result)
+        return self.store.render_snapshot()
+
+
+class TaskListTool(Tool):
+    name = "TaskList"
+    description = (
+        "List persistent tasks, dependency blockers, and status counts."
+    )
+    input_schema = {
+        "include_completed": {
+            "type": "boolean",
+            "description": "Include completed tasks in the output",
+        },
+    }
+    is_readonly = True
+    is_concurrency_safe = True
+
+    def __init__(self, store: TaskGraphStore):
+        self.store = store
+
+    async def execute(self, include_completed: bool = False) -> str:
+        return self.store.render_snapshot(include_completed=include_completed)
 
