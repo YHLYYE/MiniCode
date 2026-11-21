@@ -4,6 +4,7 @@ import pytest
 
 from capabilities.multi_agent import AgentTool
 from capabilities.worktree import WorktreeManager
+from capabilities.verification import VerificationResult
 from core.state import DoneEvent, LoopState, TextDelta
 from core.tools.files import WriteTool
 from core.tools.shell import BashTool
@@ -88,6 +89,14 @@ async def test_explore_never_uses_worktree(repo):
 async def test_team_coding_and_testing_share_one_worktree(repo):
     seen = {}
 
+    class FakeVerifier:
+        def __init__(self, root):
+            self.root = root
+            seen["verify_root"] = root
+
+        async def verify(self):
+            return VerificationResult("fake", True, 0, "ok")
+
     def factory(tools, system_prompt, max_turns):
         by_name = {tool.name: tool for tool in tools}
         role = (
@@ -116,6 +125,7 @@ async def test_team_coding_and_testing_share_one_worktree(repo):
             "Write": WriteTool(workspace_root=root),
             "Bash": BashTool(workspace_root=root),
         },
+        verifier_factory=FakeVerifier,
         isolate_subagents=True,
     )
 
@@ -124,7 +134,9 @@ async def test_team_coding_and_testing_share_one_worktree(repo):
     coding_root = seen["coding"]["Write"]._backend.root
     testing_root = seen["testing"]["Bash"]._workspace_root
     assert coding_root == testing_root
+    assert seen["verify_root"] == coding_root
     assert "changed_files: ['team.txt']" in result
+    assert "verification: passed" in result
     assert not (repo / "team.txt").exists()
 
 
@@ -158,3 +170,88 @@ async def test_general_failure_reports_preserved_worktree(repo):
     assert "branch: minicode/" in result
     assert "path:" in result
     assert not (repo / "partial.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_general_worktree_verification_runs_before_commit(repo):
+    seen = {}
+
+    class FakeVerifier:
+        def __init__(self, root):
+            self.root = root
+            seen["verify_root"] = root
+
+        async def verify(self):
+            return VerificationResult("fake", True, 0, "ok")
+
+    def factory(tools, system_prompt, max_turns):
+        by_name = {tool.name: tool for tool in tools}
+
+        class FakeLoop:
+            async def run(self, task):
+                await by_name["Write"].execute(
+                    file_path="verified.txt", content="verified"
+                )
+                yield TextDelta("done")
+                yield DoneEvent(LoopState(turn_count=1))
+
+        return FakeLoop()
+
+    agent_tool = AgentTool(
+        agent_loop_factory=factory,
+        tool_registry={},
+        worktree_manager=WorktreeManager(repo),
+        workspace_tool_factory=lambda root: {
+            "Write": WriteTool(workspace_root=root),
+        },
+        verifier_factory=FakeVerifier,
+        isolate_subagents=True,
+    )
+
+    result = await agent_tool.execute("verified change", agent_type="general")
+
+    assert seen["verify_root"].name.startswith("verified-change-")
+    assert "verification: passed" in result
+    assert "commit: none" not in result
+    assert not (repo / "verified.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_failed_worktree_verification_keeps_uncommitted_worktree(repo):
+    class FakeVerifier:
+        def __init__(self, root):
+            self.root = root
+
+        async def verify(self):
+            return VerificationResult("fake", False, 1, "test failed")
+
+    def factory(tools, system_prompt, max_turns):
+        by_name = {tool.name: tool for tool in tools}
+
+        class FakeLoop:
+            async def run(self, task):
+                await by_name["Write"].execute(
+                    file_path="bad.txt", content="bad"
+                )
+                yield TextDelta("done")
+                yield DoneEvent(LoopState(turn_count=1))
+
+        return FakeLoop()
+
+    agent_tool = AgentTool(
+        agent_loop_factory=factory,
+        tool_registry={},
+        worktree_manager=WorktreeManager(repo),
+        workspace_tool_factory=lambda root: {
+            "Write": WriteTool(workspace_root=root),
+        },
+        verifier_factory=FakeVerifier,
+        isolate_subagents=True,
+    )
+
+    result = await agent_tool.execute("bad change", agent_type="general")
+
+    assert "verification: failed" in result
+    assert "commit: none" in result
+    assert "test failed" in result
+    assert not (repo / "bad.txt").exists()

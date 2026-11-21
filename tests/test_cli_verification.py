@@ -44,10 +44,12 @@ def test_build_tools_wires_subagent_isolation(monkeypatch, tmp_path):
     monkeypatch.setattr(main_module, "MemoryManager", FakeMemory)
 
     tools, *_ = main_module._build_tools(
-        "normal", Config(model="test"), isolate_subagents=True
+        "normal", Config(model="test"), isolate_subagents=True,
+        subagent_verifier_factory=lambda root: "verifier",
     )
     agent_tool = next(tool for tool in tools if tool.name == "Agent")
 
     assert agent_tool._isolate_subagents is True
     assert agent_tool._worktree_manager is not None
     assert agent_tool._workspace_tool_factory is not None
+    assert agent_tool._verifier_factory is not None

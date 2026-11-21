@@ -123,6 +123,7 @@ class AgentTool(Tool):
         tool_registry=None,
         worktree_manager=None,
         workspace_tool_factory=None,
+        verifier_factory=None,
         isolate_subagents: bool = False,
     ):
         super().__init__()
@@ -130,6 +131,7 @@ class AgentTool(Tool):
         self._tool_registry = tool_registry or {}
         self._worktree_manager = worktree_manager
         self._workspace_tool_factory = workspace_tool_factory
+        self._verifier_factory = verifier_factory
         self._isolate_subagents = isolate_subagents
         # 子 Agent 用完的 token / 成本攒在这里，等父级 drain_usage() 取走
         self._pending_tokens = 0
@@ -178,15 +180,36 @@ class AgentTool(Tool):
                     result = await self._run_subagent(
                         task, profile, tool_registry=workspace_tools
                     )
-                    commit = self._worktree_manager.commit(
-                        handle, f"minicode subagent: {task[:60]}"
-                    )
-                    diff = self._worktree_manager.diff_stat(handle)
-                    changed = self._worktree_manager.changed_files(handle)
+                    verification = None
+                    if self._verifier_factory is not None:
+                        verification = await self._verifier_factory(
+                            handle.path
+                        ).verify()
+                    if verification is not None and not verification.passed:
+                        commit = None
+                        diff = ""
+                        changed = []
+                        verify_line = (
+                            "verification: failed\n"
+                            f"verify_exit_code: {verification.exit_code}\n"
+                            f"verify_evidence:\n{verification.output}"
+                        )
+                    else:
+                        commit = self._worktree_manager.commit(
+                            handle, f"minicode subagent: {task[:60]}"
+                        )
+                        diff = self._worktree_manager.diff_stat(handle)
+                        changed = self._worktree_manager.changed_files(handle)
+                        verify_line = (
+                            "verification: passed"
+                            if verification is not None
+                            else "verification: not_configured"
+                        )
                     result["worktree_header"] = (
                         f"branch: {handle.branch}\n"
                         f"commit: {commit or 'none'}\n"
                         f"path: {handle.path}\n"
+                        f"{verify_line}\n"
                         f"changed_files: {changed}\n"
                         f"diff:\n{diff}"
                     )
@@ -338,7 +361,35 @@ class AgentTool(Tool):
             entry["ok"] for entry in results
         )
         commit = None
+        verification = None
         if passed:
+            if self._verifier_factory is not None:
+                try:
+                    verification = await self._verifier_factory(
+                        handle.path
+                    ).verify()
+                except Exception as exc:
+                    verification = None
+                    return (
+                        f"Agent Team verification failed to run: {exc}\n"
+                        f"branch: {handle.branch}\n"
+                        f"path: {handle.path}\n"
+                    )
+            if verification is not None and not verification.passed:
+                lines = [
+                    f"[Agent Team: {len(results)}/{len(self.TEAM_ROLES)} steps, "
+                    "isolated]\n"
+                    f"branch: {handle.branch}\n"
+                    "commit: none\n"
+                    f"path: {handle.path}\n"
+                    "verification: failed\n"
+                    f"verify_exit_code: {verification.exit_code}\n"
+                    f"verify_evidence:\n{verification.output}\n"
+                ]
+                for entry in results:
+                    lines.append(f"\n## {entry['role']} ✓")
+                    lines.append(entry["output"])
+                return "\n".join(lines)
             try:
                 commit = self._worktree_manager.commit(
                     handle, f"minicode team: {task[:60]}"
@@ -351,6 +402,7 @@ class AgentTool(Tool):
             f"branch: {handle.branch}\n"
             f"commit: {commit or 'none'}\n"
             f"path: {handle.path}\n"
+            f"verification: {'passed' if verification is not None else 'not_configured'}\n"
         ]
         if passed:
             lines.append(

@@ -48,7 +48,8 @@ PACKAGE_ROOT = Path(__file__).resolve().parent
 
 
 def _build_tools(mode: str, config: Config, inject_memory: bool = True,
-                 isolate_subagents: bool = False):
+                 isolate_subagents: bool = False,
+                 subagent_verifier_factory=None):
     """Initialize subsystems.
 
     Returns (tools, system_prompt, exec_mode, memory_manager,
@@ -118,6 +119,9 @@ def _build_tools(mode: str, config: Config, inject_memory: bool = True,
         tool_registry={t.name: t for t in base_tools},
         worktree_manager=WorktreeManager(Path.cwd()) if isolate_subagents else None,
         workspace_tool_factory=workspace_tool_factory if isolate_subagents else None,
+        verifier_factory=(
+            subagent_verifier_factory if isolate_subagents else None
+        ),
         isolate_subagents=isolate_subagents,
     )
 
@@ -207,7 +211,16 @@ def main(task: str | None, mode: str, max_turns: int, max_cost: float,
     (tools, system_prompt, exec_mode, memory_manager,
     system_prompt_factory) = _build_tools(
         mode, config, inject_memory=not no_memory_inject,
-        isolate_subagents=isolate_subagents)
+        isolate_subagents=isolate_subagents,
+        subagent_verifier_factory=(
+            lambda root: CommandVerifier(
+                verify_command,
+                cwd=root,
+                timeout_seconds=verify_timeout,
+            )
+            if verify_command else None
+        ),
+    )
 
     # --resume: 加载历史会话
     resume_state = None
