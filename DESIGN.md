@@ -84,7 +84,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 277 个测试
+└── tests/                     # 279 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -1080,6 +1080,10 @@ if usage is not None:
 3. 最多重试 `--verify-retries` 次；
 4. 重试耗尽返回 `VERIFY_FAILED`，不能伪装为完成；
 5. 未配置验收命令时保持原行为。
+
+若同时启用 `--isolate-subagents`，验收命令还会在每个隔离子任务提交前、以
+Worktree 根目录为 cwd 执行。验收失败时保留现场且不提交，避免主工作区的旧代码
+测试通过而错误放行子 Agent 的修改。
 
 ---
 

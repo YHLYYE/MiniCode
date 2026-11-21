@@ -212,6 +212,14 @@ Project Memory、Skill 与模型适配器继续共享父级配置；文件、She
 
 用户后续可以检查提交并手动应用到主工作区。
 
+如果同时配置 `--verify-command`，隔离子 Agent 必须在提交前以 Worktree 根目录为
+cwd 执行外部验收。验收失败时：
+
+- 不创建可应用提交；
+- 保留未提交的 Worktree 现场；
+- 返回退出码和输出尾部；
+- 主 Agent 不能把该子任务报告为已验证完成。
+
 ## 7. Team 流程
 
 启用 Worktree 后：
