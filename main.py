@@ -35,6 +35,7 @@ from capabilities.skill import SkillSystem
 from capabilities.memory import (MEMORY_HINT_TOP_K, MEMORY_INJECT_MIN_SIMILARITY,
                                  MemoryManager, format_memory_hint)
 from capabilities.multi_agent import AgentTool, compose_subagent_prompt
+from capabilities.worktree import WorktreeManager
 from capabilities.compression import summarize_messages
 from capabilities.verification import CommandVerifier
 from capabilities.security import resolve_tools_for_mode, ExecutionMode
@@ -46,7 +47,8 @@ from session_store import SessionStore
 PACKAGE_ROOT = Path(__file__).resolve().parent
 
 
-def _build_tools(mode: str, config: Config, inject_memory: bool = True):
+def _build_tools(mode: str, config: Config, inject_memory: bool = True,
+                 isolate_subagents: bool = False):
     """Initialize subsystems.
 
     Returns (tools, system_prompt, exec_mode, memory_manager,
@@ -91,10 +93,32 @@ def _build_tools(mode: str, config: Config, inject_memory: bool = True):
         RememberTool(memory_manager),
     ]
 
+    def workspace_tool_factory(root):
+        return {
+            tool.name: tool
+            for tool in [
+                ReadTool(workspace_root=root),
+                WriteTool(workspace_root=root),
+                EditTool(workspace_root=root),
+                BashTool(workspace_root=root),
+                GrepTool(workspace_root=root),
+                GlobTool(workspace_root=root),
+                WebSearchTool(),
+                WebFetchTool(),
+                TodoWriteTool(),
+                SkillTool(skill_system),
+                RecallMemoryTool(memory_manager),
+                RememberTool(memory_manager),
+            ]
+        }
+
     # Sub-agents get the base toolset only (no Agent → no unbounded recursion).
     agent_tool = AgentTool(
         agent_loop_factory=_agent_factory,
         tool_registry={t.name: t for t in base_tools},
+        worktree_manager=WorktreeManager(Path.cwd()) if isolate_subagents else None,
+        workspace_tool_factory=workspace_tool_factory if isolate_subagents else None,
+        isolate_subagents=isolate_subagents,
     )
 
     all_tools = base_tools + [agent_tool]
@@ -182,7 +206,8 @@ def main(task: str | None, mode: str, max_turns: int, max_cost: float,
 
     (tools, system_prompt, exec_mode, memory_manager,
     system_prompt_factory) = _build_tools(
-        mode, config, inject_memory=not no_memory_inject)
+        mode, config, inject_memory=not no_memory_inject,
+        isolate_subagents=isolate_subagents)
 
     # --resume: 加载历史会话
     resume_state = None

@@ -117,10 +117,20 @@ class AgentTool(Tool):
 
     _semaphore = asyncio.Semaphore(5)  # Max concurrent sub-agents
 
-    def __init__(self, agent_loop_factory=None, tool_registry=None):
+    def __init__(
+        self,
+        agent_loop_factory=None,
+        tool_registry=None,
+        worktree_manager=None,
+        workspace_tool_factory=None,
+        isolate_subagents: bool = False,
+    ):
         super().__init__()
         self._agent_factory = agent_loop_factory
         self._tool_registry = tool_registry or {}
+        self._worktree_manager = worktree_manager
+        self._workspace_tool_factory = workspace_tool_factory
+        self._isolate_subagents = isolate_subagents
         # 子 Agent 用完的 token / 成本攒在这里，等父级 drain_usage() 取走
         self._pending_tokens = 0
         self._pending_cost = 0.0
@@ -156,7 +166,31 @@ class AgentTool(Tool):
                     f"Use one of {sorted(self.AGENT_PROFILES)} or 'team'.")
         async with self._semaphore:
             try:
-                result = await self._run_subagent(task, profile)
+                if (
+                    agent_type == "general"
+                    and self._isolate_subagents
+                    and self._worktree_manager is not None
+                    and self._workspace_tool_factory is not None
+                ):
+                    handle = self._worktree_manager.create(task)
+                    workspace_tools = self._workspace_tool_factory(handle.path)
+                    result = await self._run_subagent(
+                        task, profile, tool_registry=workspace_tools
+                    )
+                    commit = self._worktree_manager.commit(
+                        handle, f"minicode subagent: {task[:60]}"
+                    )
+                    diff = self._worktree_manager.diff_stat(handle)
+                    changed = self._worktree_manager.changed_files(handle)
+                    result["worktree_header"] = (
+                        f"branch: {handle.branch}\n"
+                        f"commit: {commit or 'none'}\n"
+                        f"path: {handle.path}\n"
+                        f"changed_files: {changed}\n"
+                        f"diff:\n{diff}"
+                    )
+                else:
+                    result = await self._run_subagent(task, profile)
             except Exception as e:
                 return f"Sub-agent ({agent_type}) failed: {e}"
         self._record_subagent_usage(result)
@@ -168,7 +202,8 @@ class AgentTool(Tool):
         cost = result.get("cost_usd", 0.0)
         return (
             f"[Sub-agent: {agent_type}, {turns} turns, "
-            f"{tokens} tokens, ${cost:.4f}]\n\n"
+            f"{tokens} tokens, ${cost:.4f}]\n"
+            f"{result.get('worktree_header', '')}\n\n"
             f"{result.get('output', '')}"
         )
 
@@ -197,6 +232,13 @@ class AgentTool(Tool):
                 "changes work. Return a test plan and expected results."
             ),
         }
+
+        if (
+            self._isolate_subagents
+            and self._worktree_manager is not None
+            and self._workspace_tool_factory is not None
+        ):
+            return await self._run_team_isolated(task, role_prompts)
 
         results: list[dict] = []
         upstream_role = ""
@@ -239,19 +281,96 @@ class AgentTool(Tool):
             lines.append(r["output"])
         return "\n".join(lines)
 
+    async def _run_team_isolated(self, task: str, role_prompts: dict) -> str:
+        try:
+            handle = self._worktree_manager.create(task)
+        except Exception as exc:
+            return f"Agent Team failed: {exc}"
+
+        workspace_tools = self._workspace_tool_factory(handle.path)
+        results: list[dict] = []
+        upstream_role = ""
+        upstream_output = ""
+
+        for role in self.TEAM_ROLES:
+            step_task = task
+            if upstream_output:
+                step_task = (
+                    f"{task}\n\n--- Output from the {upstream_role} step ---\n"
+                    f"{upstream_output}"
+                )
+            profile = {
+                "tools_filter": self.TEAM_ROLE_TOOLS[role],
+                "max_turns": 10,
+                "system_prompt": role_prompts[role],
+            }
+            registry = self._tool_registry if role == "research" else workspace_tools
+            async with self._semaphore:
+                try:
+                    result = await self._run_subagent(
+                        step_task, profile, tool_registry=registry
+                    )
+                    entry = {"role": role, "ok": True, **result}
+                except Exception as exc:
+                    entry = {
+                        "role": role,
+                        "ok": False,
+                        "output": str(exc),
+                        "turns": 0,
+                        "tokens": 0,
+                        "cost_usd": 0.0,
+                    }
+            results.append(entry)
+            self._record_subagent_usage(entry)
+            if not entry["ok"]:
+                break
+            upstream_role, upstream_output = role, entry["output"]
+
+        passed = len(results) == len(self.TEAM_ROLES) and all(
+            entry["ok"] for entry in results
+        )
+        commit = None
+        if passed:
+            try:
+                commit = self._worktree_manager.commit(
+                    handle, f"minicode team: {task[:60]}"
+                )
+            except Exception as exc:
+                return f"Agent Team commit failed: {exc}\npath: {handle.path}"
+
+        lines = [
+            f"[Agent Team: {len(results)}/{len(self.TEAM_ROLES)} steps, isolated]\n"
+            f"branch: {handle.branch}\n"
+            f"commit: {commit or 'none'}\n"
+            f"path: {handle.path}\n"
+        ]
+        if passed:
+            lines.append(
+                f"changed_files: {self._worktree_manager.changed_files(handle)}\n"
+                f"diff:\n{self._worktree_manager.diff_stat(handle)}\n"
+            )
+        for entry in results:
+            status = "✓" if entry["ok"] else "✗"
+            lines.append(f"\n## {entry['role']} {status}")
+            lines.append(entry["output"])
+        return "\n".join(lines)
+
     # ── Sub-agent runner ──
 
-    async def _run_subagent(self, task: str, profile: dict) -> dict:
+    async def _run_subagent(
+        self, task: str, profile: dict, tool_registry: dict | None = None
+    ) -> dict:
         from core.state import TextDelta, DoneEvent
 
         # Resolve tools
+        registry = self._tool_registry if tool_registry is None else tool_registry
         if profile["tools_filter"]:
             tools = [
-                t for t in self._tool_registry.values()
+                t for t in registry.values()
                 if t.name in profile["tools_filter"]
             ]
         else:
-            tools = list(self._tool_registry.values())
+            tools = list(registry.values())
 
         if self._agent_factory is None:
             # 四个键必须齐全：execute 会把它们格式化进返回抬头。
