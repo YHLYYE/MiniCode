@@ -94,12 +94,22 @@ async def _terminate_process_tree(process) -> None:
     if process.returncode is not None:
         return
     if os.name == "nt":
-        await asyncio.to_thread(
-            subprocess.run,
-            ["taskkill", "/T", "/F", "/PID", str(process.pid)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        # A console interrupt reaches descendants that inherited the new
+        # process group, while taskkill /T is the authoritative fallback.
+        try:
+            process.send_signal(signal.CTRL_BREAK_EVENT)
+        except (OSError, ValueError):
+            pass
+        for _ in range(2):
+            completed = await asyncio.to_thread(
+                subprocess.run,
+                ["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if completed.returncode == 0:
+                break
+            await asyncio.sleep(0.05)
     else:
         try:
             os.killpg(process.pid, signal.SIGTERM)
