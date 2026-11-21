@@ -2,7 +2,7 @@
 
 > Reference: Claude Code architecture (reverse-engineered from how-claude-code-works),
 > implemented in **~4,850 lines of pure Python** with **zero LangChain dependency**.
-> 283 unit tests (1 skipped), all passing.
+> 289 unit tests (1 skipped), all passing.
 
 A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill routing**,
 **3-tier Memory system**, **3-tier Context Compression with measurable benchmarks**,
@@ -117,7 +117,7 @@ python main.py "Fix the tests" --verify-command "python -m pytest -q"
 python main.py "Implement the feature" --isolate-subagents
 ```
 
-### Available Tools (13)
+### Available Tools (13 + 3 optional Worktree lifecycle tools)
 
 | Tool | Description |
 |------|-------------|
@@ -132,6 +132,8 @@ python main.py "Implement the feature" --isolate-subagents
 | `Remember` | Persist knowledge to long-term memory |
 | `Agent` | Sub-agent delegation (explore / general / team) |
 
+Optional with `--isolate-subagents`: `WorktreeList`, `WorktreeApply`, `WorktreeRemove`.
+
 `--isolate-subagents` 会为 `general` 与 `team` 的 coding/testing 阶段创建 Git
 Worktree；changes are committed to the task branch but are **not auto-merged**.
 `explore` stays read-only in the main workspace. Sub-agents still get only the base
@@ -145,6 +147,16 @@ command runs inside each task Worktree before it is committed. Failed verificati
 returns the test evidence, preserves the Worktree, and does not create a ready-to-apply
 commit.
 
+When isolation is enabled, three lifecycle tools are added:
+
+- `WorktreeList` - inspect branch, verification state, commit and changed files;
+- `WorktreeApply` - cherry-pick a verified ready branch after user approval;
+- `WorktreeRemove` - remove a completed/failed Worktree while retaining its branch.
+
+`WorktreeApply` and `WorktreeRemove` are destructive and pass through MiniCode's
+permission confirmation. Unverified branches cannot be applied. The lifecycle index
+is stored in `.minicode/worktrees/index.json`.
+
 ### Execution Modes
 
 - **Normal**: Full tool access
@@ -156,7 +168,7 @@ commit.
 
 ```bash
 python -m pytest tests/ -v
-# 283 collected: 282 passed, 1 skipped
+# 289 collected: 288 passed, 1 skipped
 ```
 
 ---
@@ -194,7 +206,7 @@ minicode/
 ├── skills/                     # Skill definitions (markdown)
 │   └── code_review.md          # Example skill
 │
-└── tests/                      # 283 unit tests
+└── tests/                      # 289 unit tests
 ```
 
 ---

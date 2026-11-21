@@ -84,7 +84,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 283 个测试
+└── tests/                     # 289 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -1084,6 +1084,17 @@ if usage is not None:
 若同时启用 `--isolate-subagents`，验收命令还会在每个隔离子任务提交前、以
 Worktree 根目录为 cwd 执行。验收失败时保留现场且不提交，避免主工作区的旧代码
 测试通过而错误放行子 Agent 的修改。
+
+### 7.7 Worktree 生命周期
+
+启用隔离后，主 Agent 额外获得三个工具：
+
+- `WorktreeList`：查看 branch、verification、commit、changed files 和路径；
+- `WorktreeApply`：只允许应用 `status=ready` 且 `verification=passed` 的分支，主工作区必须干净，冲突时 `cherry-pick --abort`；
+- `WorktreeRemove`：拒绝删除 active 工作区，允许清理完成或失败现场，始终保留分支；
+- Apply/Remove 都标记为 destructive，必须经过权限确认。
+
+生命周期索引写入 `.minicode/worktrees/index.json`，状态包括 active、ready、ready_unverified、verify_failed、failed、applied、removed。
 
 ---
 

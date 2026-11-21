@@ -220,6 +220,16 @@ cwd 执行外部验收。验收失败时：
 - 返回退出码和输出尾部；
 - 主 Agent 不能把该子任务报告为已验证完成。
 
+### 6.6 生命周期工具
+
+启用隔离后，主 Agent 获得三个工具：
+
+- `WorktreeList`：读取 `.minicode/worktrees/index.json`，展示 branch、状态、验证结果、commit、changed files 和路径；
+- `WorktreeApply`：只允许 `status=ready` 且 `verification=passed` 的条目；要求主工作区干净；使用 cherry-pick，冲突立即 abort；成功后标记 applied；
+- `WorktreeRemove`：拒绝 active 条目；清理完成后保留分支；成功后标记 removed。
+
+Apply 与 Remove 均为 destructive 工具，必须经过人工权限确认。
+
 ## 7. Team 流程
 
 启用 Worktree 后：
