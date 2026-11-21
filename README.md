@@ -2,7 +2,7 @@
 
 > Reference: Claude Code architecture (reverse-engineered from how-claude-code-works),
 > implemented in **~4,850 lines of pure Python** with **zero LangChain dependency**.
-> 252 unit tests (1 skipped), all passing.
+> 268 unit tests (1 skipped), all passing.
 
 A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill routing**,
 **3-tier Memory system**, **3-tier Context Compression with measurable benchmarks**,
@@ -109,6 +109,12 @@ python main.py                              # Interactive REPL
 python main.py "Fix the login bug"          # Single-shot task
 python main.py --mode plan "Refactor utils"  # Plan mode (read-only)
 python main.py --max-turns 30 --max-cost 10.0
+
+# Optional external verification: completion is blocked until this exits 0
+python main.py "Fix the tests" --verify-command "python -m pytest -q"
+
+# Optional: write-capable sub-agents run in isolated Git worktrees
+python main.py "Implement the feature" --isolate-subagents
 ```
 
 ### Available Tools (13)
@@ -126,8 +132,10 @@ python main.py --max-turns 30 --max-cost 10.0
 | `Remember` | Persist knowledge to long-term memory |
 | `Agent` | Sub-agent delegation (explore / general / team) |
 
-> `Agent` 的 `worktree` 模式已移除（cwd 隔离未实现）；子 Agent 只拿到基础工具集、
-> 不含 `Agent` 本身，所以不存在无限递归。
+`--isolate-subagents` 会为 `general` 与 `team` 的 coding/testing 阶段创建 Git
+Worktree；changes are committed to the task branch but are **not auto-merged**.
+`explore` stays read-only in the main workspace. Sub-agents still get only the base
+toolset and never receive the `Agent` tool, so recursive delegation is impossible.
 
 ### Execution Modes
 
@@ -140,7 +148,7 @@ python main.py --max-turns 30 --max-cost 10.0
 
 ```bash
 python -m pytest tests/ -v
-# 151 passed, 1 skipped in 1.04s
+# 268 collected: 267 passed, 1 skipped
 ```
 
 ---
@@ -178,7 +186,7 @@ minicode/
 ├── skills/                     # Skill definitions (markdown)
 │   └── code_review.md          # Example skill
 │
-└── tests/                      # 252 unit tests
+└── tests/                      # 268 unit tests
 ```
 
 ---

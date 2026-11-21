@@ -84,7 +84,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 252 个测试
+└── tests/                     # 268 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -1058,6 +1058,27 @@ if usage is not None:
 
 `main.py` 里单个子 Agent 的额度取总预算的 1/4（team 最多 3 个子 Agent + 主 Agent）。
 
+### 7.5 可选 Worktree 隔离
+
+`--isolate-subagents` 只改变写操作子 Agent 的执行面：
+
+- `explore` 留在主工作区，只读执行；
+- `general` 创建独立 Worktree；
+- `team` 的 coding/testing 共用同一个 Worktree，research 仍在主工作区；
+- 文件、搜索与 Bash 工具绑定到 Worktree 根目录，不通过 `os.chdir`；
+- 子 Agent 结果返回 branch、commit、changed files 和 diff stat；
+- 不自动 merge，且 dirty Git 工作区直接拒绝隔离。
+
+### 7.6 外部验收门
+
+`--verify-command` 配置后，模型自然结束不会立即被视为成功：
+
+1. 执行用户提供的验收命令；
+2. 退出码非 0 时，把输出尾部作为证据回灌模型；
+3. 最多重试 `--verify-retries` 次；
+4. 重试耗尽返回 `VERIFY_FAILED`，不能伪装为完成；
+5. 未配置验收命令时保持原行为。
+
 ---
 
 ## 8. 安全审查
@@ -1483,7 +1504,7 @@ class SessionStore:
 | 记忆系统 | CLAUDE.md + Hook + 压缩摘要 | CLAUDE.md + 压缩摘要 + n-gram 向量检索 | 自研 n-gram（ChromaDB 在 Windows 崩溃） |
 | 子 Agent 协作 | SendMessage + JSONL邮箱 + FSM | AgentTool 统一路由 | 单机不需要对等通信协议 |
 | 权限 | 7 层 + AST 分析 | 4 层 | 不需要 iOS/Android 沙箱、OS 级防护 |
-| Worktree 隔离 | Git worktree 并行 | 已移除 | cwd 隔离未实现，避免假隔离安全感 |
+| Worktree 隔离 | Git worktree 并行 | 可选实现 | 写操作子 Agent 可隔离，默认关闭且不自动合并 |
 | UI | React + Ink（终端框架） | Click CLI + print | 不做终端 UI 框架 |
 
 ## 附录 B: 面试核心论述
