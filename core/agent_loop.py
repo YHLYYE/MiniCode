@@ -9,7 +9,7 @@ import json
 import re
 
 from core.state import (
-    Message, LoopState, ContinueReason,
+    Message, LoopState, ContinueReason, TerminationReason,
     TextDelta, ToolStart, ToolResult, ToolError, DoneEvent,
     RecoveryNotice, BudgetExceeded,
 )
@@ -98,6 +98,8 @@ class AgentLoop:
         max_cost_usd: float = 5.0,
         memory_manager: MemoryManager | None = None,
         system_prompt_factory=None,
+        verifier=None,
+        verify_retries: int = 2,
     ):
         self._tools = {t.name: t for t in tools}
         self._model = model_adapter
@@ -108,6 +110,9 @@ class AgentLoop:
         self._current_task: str | None = None
         self._memory = memory_manager
         self._system_prompt_factory = system_prompt_factory
+        self._verifier = verifier
+        self._verify_retries = max(0, verify_retries)
+        self._verification_failures = 0
         self._compressor = ContextCompressor()
         self._permission = PermissionManager(model=model_adapter)
         # 任务级的失败/修法追踪 —— 用来在任务结束时"提炼"一条经验：
@@ -130,6 +135,7 @@ class AgentLoop:
         self._current_task = task
         self._task_errors = []
         self._fix_evidence = None
+        self._verification_failures = 0
         # 用户纠正先落记忆：它是"不可从代码推导"的那类信息，价值高于
         # 工具报错/任务完成这类模型自己也能推出来的记录。
         await self._capture_user_correction(task)
@@ -321,6 +327,9 @@ class AgentLoop:
                     )
                 handled = await self._handle_max_tokens()
                 if not handled:
+                    self._state = self._state.with_field(
+                        termination_reason=TerminationReason.MAX_OUTPUT_TOKENS
+                    )
                     await self._record_task_done("terminated: max_tokens")
                     yield DoneEvent(self._state)
                     return
@@ -369,13 +378,52 @@ class AgentLoop:
                         f"（第 {empty_response_retries}/{_EMPTY_RESPONSE_MAX_RETRIES} 次）",
                     )
                     continue
+                self._state = self._state.with_field(
+                    termination_reason=TerminationReason.EMPTY_RESPONSE
+                )
                 await self._record_task_done("terminated: empty response")
                 yield DoneEvent(self._state)
                 return
 
             # ── 5. No tool calls → task complete ──
             if not tool_calls and assistant_text:
-                self._state = self._state.with_transition(None)
+                if self._verifier is not None:
+                    verification = await self._verifier.verify()
+                    if not verification.passed:
+                        if self._verification_failures < self._verify_retries:
+                            self._verification_failures += 1
+                            evidence = (
+                                "[External verification failed]\n"
+                                f"command: {verification.command}\n"
+                                f"exit_code: {verification.exit_code}\n"
+                                f"timed_out: {verification.timed_out}\n"
+                                f"evidence:\n{verification.output}\n"
+                                "请修复未通过的验收，不要只重复声称完成。"
+                            )
+                            self._state = self._state.add_message(
+                                Message(role="user", content=evidence)
+                            )
+                            self._state = self._state.with_transition(
+                                ContinueReason.VERIFICATION_RETRY
+                            )
+                            yield RecoveryNotice(
+                                ContinueReason.VERIFICATION_RETRY,
+                                "外部验收失败，已将证据回灌模型",
+                            )
+                            continue
+                        self._state = self._state.with_field(
+                            transition=None,
+                            termination_reason=TerminationReason.VERIFY_FAILED,
+                        )
+                        await self._record_task_done(
+                            "terminated: verification failed"
+                        )
+                        yield DoneEvent(self._state)
+                        return
+                self._state = self._state.with_field(
+                    transition=None,
+                    termination_reason=TerminationReason.COMPLETED,
+                )
                 await self._record_task_done(assistant_text[:300])
                 yield DoneEvent(self._state)
                 return
@@ -543,6 +591,9 @@ class AgentLoop:
             self._state = self._state.with_transition(ContinueReason.NEXT_TURN)
 
         # Max turns reached
+        self._state = self._state.with_field(
+            termination_reason=TerminationReason.MAX_TURNS
+        )
         await self._record_task_done("terminated: max_turns")
         yield DoneEvent(self._state)
 

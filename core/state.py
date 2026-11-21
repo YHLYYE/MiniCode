@@ -24,6 +24,15 @@ class ContinueReason(Enum):
     STREAM_RETRY = "stream_retry"           # 网络瞬态错误 → 退避重试
     TOOL_ERROR_RETRY = "tool_error_retry"   # 工具报错 → 把错误回喂给模型
     EMPTY_RESPONSE_RETRY = "empty_retry"    # 模型返回空响应 → 提醒它继续
+    VERIFICATION_RETRY = "verification_retry"  # 外部验收失败 → 证据回灌
+
+
+class TerminationReason(Enum):
+    COMPLETED = "completed"
+    VERIFY_FAILED = "verify_failed"
+    MAX_TURNS = "max_turns"
+    EMPTY_RESPONSE = "empty_response"
+    MAX_OUTPUT_TOKENS = "max_output_tokens"
 
 
 @dataclass(frozen=True)
@@ -52,6 +61,7 @@ class LoopState:
     auto_compact_attempts: int = 0
     transition: ContinueReason | None = None
     active_skills: tuple[str, ...] = ()
+    termination_reason: TerminationReason | None = None
 
     def add_message(self, msg: Message) -> "LoopState":
         return replace(self, messages=self.messages + (msg,))
