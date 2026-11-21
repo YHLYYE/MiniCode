@@ -71,7 +71,7 @@ def test_memory_entry_metadata_round_trip():
 
 - [x] **Step 2: Run tests and verify they fail**
 
-Run: `python -m pytest tests/test_memory_conflicts.py -q`  
+Run: `python -m pytest tests/test_memory_conflicts.py -q`
 Expected: FAIL because the new fields and migration columns are absent.
 
 - [x] **Step 3: Extend `MemoryEntry`**
@@ -115,7 +115,7 @@ Update inserts/selects/load helpers so every operation includes the columns.
 
 - [x] **Step 5: Run focused tests and commit**
 
-Run: `python -m pytest tests/test_memory_conflicts.py tests/test_memory.py -q`  
+Run: `python -m pytest tests/test_memory_conflicts.py tests/test_memory.py -q`
 Expected: PASS.
 
 ```bash
@@ -178,7 +178,7 @@ async def test_uncertain_same_subject_entries_are_marked_conflicted(tmp_path):
 
 - [x] **Step 2: Run tests and verify they fail**
 
-Run: `python -m pytest tests/test_memory_conflicts.py -q`  
+Run: `python -m pytest tests/test_memory_conflicts.py -q`
 Expected: FAIL on absent scope filtering and conflict metadata.
 
 - [x] **Step 3: Add validated write admission and relation detection**
@@ -228,7 +228,7 @@ def search(self, memory_type, query, top_k, min_similarity=None, scope=None):
 
 - [x] **Step 5: Run focused tests and commit**
 
-Run: `python -m pytest tests/test_memory_conflicts.py tests/test_memory.py tests/test_memory_eval.py -q`  
+Run: `python -m pytest tests/test_memory_conflicts.py tests/test_memory.py tests/test_memory_eval.py -q`
 Expected: PASS.
 
 ```bash
@@ -279,7 +279,7 @@ def test_conflicted_memory_hint_is_labeled(tmp_path):
 
 - [x] **Step 2: Run tests and verify they fail**
 
-Run: `python -m pytest tests/test_memory_conflicts.py -q`  
+Run: `python -m pytest tests/test_memory_conflicts.py -q`
 Expected: FAIL because automatic search is unfiltered and formatting has no conflict label.
 
 - [x] **Step 3: Filter automatic injection**
@@ -311,7 +311,7 @@ Keep the 600-character cap; append the note only if it fits.
 
 - [x] **Step 5: Run focused tests and commit**
 
-Run: `python -m pytest tests/test_memory_conflicts.py tests/test_wiring.py tests/test_memory_eval.py -q`  
+Run: `python -m pytest tests/test_memory_conflicts.py tests/test_wiring.py tests/test_memory_eval.py -q`
 Expected: PASS.
 
 ```bash
@@ -350,7 +350,7 @@ async def test_terminal_failure_increments_failure_count(tmp_path):
 
 - [x] **Step 2: Run tests and verify they fail**
 
-Run: `python -m pytest tests/test_memory_conflicts.py -q`  
+Run: `python -m pytest tests/test_memory_conflicts.py -q`
 Expected: FAIL because only `adoption_count` is updated.
 
 - [x] **Step 3: Update outcome settlement**
@@ -389,7 +389,7 @@ Use `scope="current_task"` for raw tool-error episodes, file-operation episodes 
 
 - [x] **Step 6: Run tests and commit**
 
-Run: `python -m pytest tests/test_memory.py tests/test_memory_conflicts.py tests/test_agent_loop.py -q`  
+Run: `python -m pytest tests/test_memory.py tests/test_memory_conflicts.py tests/test_agent_loop.py -q`
 Expected: PASS.
 
 ```bash
@@ -421,7 +421,7 @@ def test_successful_memory_outranks_failed_peer(tmp_path):
 
 - [x] **Step 2: Run test and verify it fails**
 
-Run: `python -m pytest tests/test_memory_conflicts.py::test_successful_memory_outranks_failed_peer -q`  
+Run: `python -m pytest tests/test_memory_conflicts.py::test_successful_memory_outranks_failed_peer -q`
 Expected: FAIL because ranking still uses `adoption_count`.
 
 - [x] **Step 3: Update ranking bonus**
@@ -438,7 +438,7 @@ Keep all BM25 score and strict-evidence behavior unchanged.
 
 - [x] **Step 4: Run memory tests**
 
-Run: `python -m pytest tests/test_memory.py tests/test_memory_eval.py tests/test_memory_conflicts.py -q`  
+Run: `python -m pytest tests/test_memory.py tests/test_memory_eval.py tests/test_memory_conflicts.py -q`
 Expected: PASS with existing recall floors unchanged.
 
 - [x] **Step 5: Update documentation**
