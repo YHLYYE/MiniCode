@@ -24,7 +24,7 @@ The order below is "what I would do next and what it would cost", not a wish lis
 | Memory | Three types (procedural / episodic / profile), SQLite by default, pluggable store | `capabilities/memory.py` |
 | Security | 4 layers; every classifier failure path resolves to HIGH; Plan/Normal dual mode physically removes write tools | `capabilities/security.py` |
 | Cost | Per-model pricing via litellm, `--max-cost` circuit breaker, sub-agent usage rolled up into the parent ledger | `core/model_adapter.py`, `core/state.py` |
-| Quality gates | 321 tests, pyflakes gate, `verify_claims.py`, a 4-case offline verification/Worktree behavior benchmark, and Docker sandbox tests | `tests/`, `benchmarks/` |
+| Quality gates | 323 tests, pyflakes gate, `verify_claims.py`, a 4-case offline verification/Worktree behavior benchmark, and Docker sandbox tests | `tests/`, `benchmarks/` |
 
 ---
 

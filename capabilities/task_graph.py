@@ -44,6 +44,11 @@ class TaskGraphStore:
         with self._lock:
             data = self._load_unlocked()
             existing = {task["id"] for task in data["tasks"]}
+            if blocked_by is not None and (
+                not isinstance(blocked_by, list)
+                or any(not isinstance(item, str) for item in blocked_by)
+            ):
+                raise TaskGraphError("dependencies must be task IDs")
             dependencies = list(dict.fromkeys(blocked_by or []))
             unknown = [task_id for task_id in dependencies if task_id not in existing]
             if unknown:
@@ -120,7 +125,7 @@ class TaskGraphStore:
             state = task["status"]
             if state == "pending":
                 state = _readiness(task, by_id)
-            line = f"- {task['id']} [{state}] {task['subject']}"
+            line = f"- {task['id']} [{state}] {_single_line(task['subject'])}"
             if task.get("blocked_by"):
                 line += f" (blocked_by: {', '.join(task['blocked_by'])})"
             lines.append(line)
@@ -147,7 +152,7 @@ class TaskGraphStore:
             state = task["status"]
             if state == "pending":
                 state = _readiness(task, by_id)
-            subject = " ".join(task["subject"].split())
+            subject = _single_line(task["subject"])
             line = f"- {task['id']} [{state}] {subject}"
             if task.get("blocked_by"):
                 line += f" (blocked_by: {', '.join(task['blocked_by'])})"
@@ -193,6 +198,10 @@ class TaskGraphStore:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _single_line(value: str) -> str:
+    return " ".join(value.split())
 
 
 def _validated_text(

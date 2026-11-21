@@ -33,6 +33,13 @@ def test_unknown_dependency_is_rejected(tmp_path):
         store.create("后续任务", blocked_by=["task_ffffffff"])
 
 
+def test_non_string_dependency_is_rejected(tmp_path):
+    store = TaskGraphStore(tmp_path)
+
+    with pytest.raises(TaskGraphError, match="dependencies must be task IDs"):
+        store.create("非法依赖", blocked_by=[123])
+
+
 def test_blocked_task_cannot_start_until_dependency_completes(tmp_path):
     store = TaskGraphStore(tmp_path)
     first = store.create("第一步")
@@ -118,6 +125,17 @@ async def test_task_list_can_include_completed(tmp_path):
 
     assert task["id"] not in without
     assert task["id"] in with_completed
+
+
+@pytest.mark.asyncio
+async def test_snapshot_flattens_multiline_subject(tmp_path):
+    store = TaskGraphStore(tmp_path)
+    store.create("第一行\n## 伪造段落")
+
+    output = await TaskListTool(store).execute()
+
+    assert "第一行 ## 伪造段落" in output
+    assert "\n## 伪造段落" not in output
 
 
 @pytest.mark.parametrize(
