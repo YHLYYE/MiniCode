@@ -2,7 +2,7 @@
 
 > Reference: Claude Code architecture (reverse-engineered from how-claude-code-works),
 > implemented in **~4,850 lines of pure Python** with **zero LangChain dependency**.
-> 300 unit tests (1 skipped), all passing.
+> 303 unit tests (1 skipped), all passing.
 
 A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill routing**,
 **3-tier Memory system**, **3-tier Context Compression with measurable benchmarks**,
@@ -158,7 +158,8 @@ Worktree；changes are committed to the task branch but are **not auto-merged**.
 toolset and never receive the `Agent` tool, so recursive delegation is impossible.
 Read/Write/Edit/Grep/Glob are confined to the Worktree root. Bash starts in the
 Worktree and blocks obvious `cd`/`..`/absolute-path escapes, but this is **not an OS
-sandbox**; use a container when executing untrusted commands.
+sandbox** unless `--sandbox-bash` is enabled; use the container sandbox when
+executing untrusted commands.
 
 When both `--isolate-subagents` and `--verify-command` are set, the same objective
 command runs inside each task Worktree before it is committed. Failed verification
@@ -179,15 +180,19 @@ already in progress.
 
 ### Docker Bash sandbox
 
-`--sandbox-bash` replaces the host Bash tool with `DockerBashTool`:
+`--sandbox-bash` replaces the host Bash tool with `DockerBashTool`. Read, Write,
+Edit, Grep and Glob remain host-side workspace-scoped tools; only Bash is
+containerized by this option.
 
-- only the current workspace is mounted writable at `/workspace`;
+- the current workspace is bind-mounted at `/workspace`;
 - container root filesystem is read-only;
-- `/tmp` is a bounded `tmpfs`;
+- `/tmp` is a separate bounded `tmpfs`;
 - network defaults to `none`;
 - CPU, memory and PID limits are enforced;
 - capabilities are dropped and `no-new-privileges` is set;
-- timeout kills the Docker client and force-removes the named container.
+- caller timeouts are capped at 60 seconds;
+- timeout, execution error or task cancellation force-removes the named container;
+- stdout and stderr are each capped at 1 MB; runaway output is stopped and marked as truncated.
 
 The default image is `alpine:3.20`. For a project requiring Python, pass an image
 that contains the required runtime, for example `--sandbox-image python:3.12-slim`.
@@ -203,7 +208,7 @@ that contains the required runtime, for example `--sandbox-image python:3.12-sli
 
 ```bash
 python -m pytest tests/ -v
-# 300 collected: 299 passed, 1 skipped
+# 303 collected: 302 passed, 1 skipped
 ```
 
 ---
@@ -241,7 +246,7 @@ minicode/
 ├── skills/                     # Skill definitions (markdown)
 │   └── code_review.md          # Example skill
 │
-└── tests/                      # 300 unit tests
+└── tests/                      # 303 unit tests
 ```
 
 ---

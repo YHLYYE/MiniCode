@@ -96,7 +96,11 @@ def test_build_tools_selects_docker_bash(monkeypatch, tmp_path):
 
     tools, *_ = main_module._build_tools(
         "normal", Config(model="test"), sandbox_bash=True,
+        isolate_subagents=True,
         sandbox_image="alpine:3.20", sandbox_network="none",
     )
 
     assert isinstance(next(tool for tool in tools if tool.name == "Bash"), DockerBashTool)
+    agent_tool = next(tool for tool in tools if tool.name == "Agent")
+    workspace_tools = agent_tool._workspace_tool_factory(tmp_path / "subagent")
+    assert isinstance(workspace_tools["Bash"], DockerBashTool)

@@ -84,7 +84,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 300 个测试
+└── tests/                     # 303 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -533,14 +533,17 @@ class BashTool(Tool):
 
 ### 3.5 可选 Docker Bash 沙箱
 
-`--sandbox-bash` 把 Bash 放到 Docker 中：
+`--sandbox-bash` 把 Bash 放到 Docker 中；Read / Write / Edit / Grep / Glob 仍是
+宿主侧的 workspace 受限工具，并非所有工具都进入容器。
 
-- 只把当前工作区 bind mount 到 `/workspace`；
-- 根文件系统只读，`/tmp` 使用有大小上限的 `tmpfs`；
+- 当前工作区 bind mount 到 `/workspace`，`/tmp` 是独立的有界 tmpfs；
+- 根文件系统只读；
 - 默认 `--network none`；
 - 限制内存、CPU 和 PID 数；
 - 使用 `--cap-drop ALL` 与 `no-new-privileges`；
-- 超时强删命名容器，避免后台残留。
+- 模型可传入的超时被限制在 60 秒；
+- 超时、执行异常或任务取消都会强删命名容器，避免后台残留；
+- stdout / stderr 各最多保留 1 MB，超出后终止进程并标记截断。
 
 默认镜像 `alpine:3.20` 只适合通用 shell 操作；项目需要 Python/Node 等运行时，
 必须通过 `--sandbox-image` 指定包含对应依赖的镜像。Docker 不可用时工具返回失败，
