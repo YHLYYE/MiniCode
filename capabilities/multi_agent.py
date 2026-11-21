@@ -190,6 +190,9 @@ class AgentTool(Tool):
                             handle.path
                         ).verify()
                     if verification is not None and not verification.passed:
+                        self._worktree_manager.mark_verification(
+                            handle.branch, "failed", verification.output
+                        )
                         commit = None
                         diff = self._worktree_manager.working_tree_status(handle)
                         changed = self._worktree_manager.working_tree_changed_files(
@@ -206,8 +209,14 @@ class AgentTool(Tool):
                             f"branch={handle.branch}, path={handle.path}"
                         )
                     else:
+                        verification_status = (
+                            "passed" if verification is not None
+                            else "not_configured"
+                        )
                         commit = self._worktree_manager.commit(
-                            handle, f"minicode subagent: {task[:60]}"
+                            handle,
+                            f"minicode subagent: {task[:60]}",
+                            verification_status=verification_status,
                         )
                         diff = self._worktree_manager.diff_stat(handle)
                         changed = self._worktree_manager.changed_files(handle)
@@ -230,6 +239,7 @@ class AgentTool(Tool):
                     result = await self._run_subagent(task, profile)
             except Exception as e:
                 if handle is not None:
+                    self._worktree_manager.mark_failed(handle.branch, str(e))
                     self._completion_error = (
                         f"isolated subagent failed: {e}; "
                         f"branch={handle.branch}, path={handle.path}"
@@ -380,6 +390,9 @@ class AgentTool(Tool):
         commit = None
         verification = None
         if not passed:
+            self._worktree_manager.mark_failed(
+                handle.branch, "isolated team workflow failed"
+            )
             self._completion_error = (
                 "isolated team workflow failed; "
                 f"branch={handle.branch}, path={handle.path}"
@@ -402,6 +415,9 @@ class AgentTool(Tool):
                         f"path: {handle.path}\n"
                     )
             if verification is not None and not verification.passed:
+                self._worktree_manager.mark_verification(
+                    handle.branch, "failed", verification.output
+                )
                 self._completion_error = (
                     "isolated team verification failed: "
                     f"exit={verification.exit_code}, "
@@ -426,8 +442,13 @@ class AgentTool(Tool):
                     lines.append(entry["output"])
                 return "\n".join(lines)
             try:
+                verification_status = (
+                    "passed" if verification is not None else "not_configured"
+                )
                 commit = self._worktree_manager.commit(
-                    handle, f"minicode team: {task[:60]}"
+                    handle,
+                    f"minicode team: {task[:60]}",
+                    verification_status=verification_status,
                 )
             except Exception as exc:
                 self._completion_error = (

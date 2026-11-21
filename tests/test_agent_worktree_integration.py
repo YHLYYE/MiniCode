@@ -46,10 +46,11 @@ async def test_general_agent_runs_in_worktree_when_enabled(repo):
 
         return FakeLoop()
 
+    manager = WorktreeManager(repo)
     agent_tool = AgentTool(
         agent_loop_factory=factory,
         tool_registry={},
-        worktree_manager=WorktreeManager(repo),
+        worktree_manager=manager,
         workspace_tool_factory=lambda root: {
             "Write": WriteTool(workspace_root=root),
         },
@@ -74,10 +75,11 @@ async def test_explore_never_uses_worktree(repo):
 
         return FakeLoop()
 
+    manager = WorktreeManager(repo)
     agent_tool = AgentTool(
         agent_loop_factory=factory,
         tool_registry={},
-        worktree_manager=WorktreeManager(repo),
+        worktree_manager=manager,
         isolate_subagents=True,
     )
 
@@ -198,10 +200,11 @@ async def test_general_worktree_verification_runs_before_commit(repo):
 
         return FakeLoop()
 
+    manager = WorktreeManager(repo)
     agent_tool = AgentTool(
         agent_loop_factory=factory,
         tool_registry={},
-        worktree_manager=WorktreeManager(repo),
+        worktree_manager=manager,
         workspace_tool_factory=lambda root: {
             "Write": WriteTool(workspace_root=root),
         },
@@ -215,6 +218,8 @@ async def test_general_worktree_verification_runs_before_commit(repo):
     assert "verification: passed" in result
     assert "commit: none" not in result
     assert agent_tool.completion_blocker() is None
+    assert manager.list_entries()[0]["status"] == "ready"
+    assert manager.list_entries()[0]["verification"] == "passed"
     assert not (repo / "verified.txt").exists()
 
 
@@ -240,10 +245,11 @@ async def test_failed_worktree_verification_keeps_uncommitted_worktree(repo):
 
         return FakeLoop()
 
+    manager = WorktreeManager(repo)
     agent_tool = AgentTool(
         agent_loop_factory=factory,
         tool_registry={},
-        worktree_manager=WorktreeManager(repo),
+        worktree_manager=manager,
         workspace_tool_factory=lambda root: {
             "Write": WriteTool(workspace_root=root),
         },
@@ -261,6 +267,8 @@ async def test_failed_worktree_verification_keeps_uncommitted_worktree(repo):
     assert "isolated subagent verification failed" in (
         agent_tool.completion_blocker() or ""
     )
+    assert manager.list_entries()[0]["status"] == "verify_failed"
+    assert manager.list_entries()[0]["verification"] == "failed"
     assert not (repo / "bad.txt").exists()
 
 

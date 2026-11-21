@@ -48,11 +48,13 @@ def test_build_tools_wires_subagent_isolation(monkeypatch, tmp_path):
         subagent_verifier_factory=lambda root: "verifier",
     )
     agent_tool = next(tool for tool in tools if tool.name == "Agent")
+    tool_names = {tool.name for tool in tools}
 
     assert agent_tool._isolate_subagents is True
     assert agent_tool._worktree_manager is not None
     assert agent_tool._workspace_tool_factory is not None
     assert agent_tool._verifier_factory is not None
+    assert {"WorktreeList", "WorktreeApply", "WorktreeRemove"} <= tool_names
 
 
 def test_subagent_verifier_factory_is_none_without_command():

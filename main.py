@@ -35,7 +35,12 @@ from capabilities.skill import SkillSystem
 from capabilities.memory import (MEMORY_HINT_TOP_K, MEMORY_INJECT_MIN_SIMILARITY,
                                  MemoryManager, format_memory_hint)
 from capabilities.multi_agent import AgentTool, compose_subagent_prompt
-from capabilities.worktree import WorktreeManager
+from capabilities.worktree import (
+    WorktreeApplyTool,
+    WorktreeListTool,
+    WorktreeManager,
+    WorktreeRemoveTool,
+)
 from capabilities.compression import summarize_messages
 from capabilities.verification import CommandVerifier
 from capabilities.security import resolve_tools_for_mode, ExecutionMode
@@ -125,7 +130,16 @@ def _build_tools(mode: str, config: Config, inject_memory: bool = True,
         isolate_subagents=isolate_subagents,
     )
 
-    all_tools = base_tools + [agent_tool]
+    worktree_manager = agent_tool._worktree_manager
+    worktree_tools = (
+        [
+            WorktreeListTool(worktree_manager),
+            WorktreeApplyTool(worktree_manager),
+            WorktreeRemoveTool(worktree_manager),
+        ]
+        if worktree_manager is not None else []
+    )
+    all_tools = base_tools + worktree_tools + [agent_tool]
 
     exec_mode = ExecutionMode.PLAN if mode == "plan" else ExecutionMode.NORMAL
     tools = resolve_tools_for_mode(all_tools, exec_mode)
