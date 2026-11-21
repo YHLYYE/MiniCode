@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import threading
 from datetime import datetime, timezone
@@ -218,15 +219,39 @@ def _validate_graph(data: object) -> None:
     if not isinstance(tasks, list):
         raise TaskGraphError("task graph is corrupt: tasks must be a list")
     seen: set[str] = set()
+    valid_statuses = {"pending", "in_progress", "completed"}
     for task in tasks:
         if not isinstance(task, dict):
             raise TaskGraphError("task graph is corrupt: task must be an object")
         task_id = task.get("id")
-        if not isinstance(task_id, str) or not task_id.startswith("task_"):
+        if not isinstance(task_id, str) or not re.fullmatch(
+            r"task_[0-9a-f]{8}", task_id
+        ):
             raise TaskGraphError("task graph is corrupt: invalid task id")
         if task_id in seen:
             raise TaskGraphError("task graph is corrupt: duplicate task id")
         seen.add(task_id)
+        if task.get("status") not in valid_statuses:
+            raise TaskGraphError("task graph is corrupt: invalid task status")
+        if not isinstance(task.get("subject"), str) or not task["subject"].strip():
+            raise TaskGraphError("task graph is corrupt: invalid task subject")
+        for field in ("description", "result"):
+            if not isinstance(task.get(field), str):
+                raise TaskGraphError(
+                    f"task graph is corrupt: invalid task {field}"
+                )
+        dependencies = task.get("blocked_by")
+        if not isinstance(dependencies, list) or any(
+            not isinstance(item, str) for item in dependencies
+        ):
+            raise TaskGraphError("task graph is corrupt: invalid task dependencies")
+
+    for task in tasks:
+        unknown = [item for item in task["blocked_by"] if item not in seen]
+        if unknown:
+            raise TaskGraphError(
+                "task graph is corrupt: unknown task dependency"
+            )
 
 
 def _find_task(data: dict, task_id: str) -> dict:

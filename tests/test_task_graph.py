@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from config import Config
@@ -102,6 +104,52 @@ async def test_blocked_count_is_derived_from_dependencies(tmp_path):
 
     assert second["id"] in output
     assert "blocked=1" in output
+
+
+@pytest.mark.asyncio
+async def test_task_list_can_include_completed(tmp_path):
+    store = TaskGraphStore(tmp_path)
+    task = store.create("已完成任务")
+    store.update(task["id"], "in_progress")
+    store.update(task["id"], "completed")
+
+    without = await TaskListTool(store).execute()
+    with_completed = await TaskListTool(store).execute(include_completed=True)
+
+    assert task["id"] not in without
+    assert task["id"] in with_completed
+
+
+@pytest.mark.parametrize(
+    "task_patch",
+    [
+        {"status": None},
+        {"subject": None},
+        {"blocked_by": "not-a-list"},
+        {"blocked_by": ["task_ffffffff"]},
+    ],
+)
+def test_corrupt_task_fields_fail_closed(tmp_path, task_patch):
+    path = tmp_path / ".minicode" / "tasks.json"
+    path.parent.mkdir(parents=True)
+    task = {
+        "id": "task_12345678",
+        "subject": "broken",
+        "description": "",
+        "status": "pending",
+        "blocked_by": [],
+        "result": "",
+        "created_at": "2026-11-21T00:00:00+00:00",
+        "started_at": None,
+        "completed_at": None,
+    }
+    task.update(task_patch)
+    path.write_text(
+        json.dumps({"version": 1, "tasks": [task]}), encoding="utf-8"
+    )
+
+    with pytest.raises(TaskGraphError, match="corrupt"):
+        TaskGraphStore(tmp_path).tasks()
 
 
 def test_prompt_injects_open_tasks_only(tmp_path):
