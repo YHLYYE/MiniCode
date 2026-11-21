@@ -43,6 +43,12 @@ from capabilities.worktree import (
 )
 from capabilities.compression import summarize_messages
 from capabilities.docker_sandbox import DockerBashTool
+from capabilities.task_graph import (
+    TaskCreateTool,
+    TaskGraphStore,
+    TaskListTool,
+    TaskUpdateTool,
+)
 from capabilities.verification import CommandVerifier
 from capabilities.security import resolve_tools_for_mode, ExecutionMode
 from prompt.system_prompt import build_system_prompt
@@ -73,6 +79,12 @@ def _build_tools(mode: str, config: Config, inject_memory: bool = True,
     if cwd_skills.resolve() != builtin_skills.resolve():
         skill_system.register_from_source(cwd_skills, priority=20)
     memory_manager = MemoryManager()
+    task_store = TaskGraphStore(Path.cwd())
+    task_tools = [
+        TaskCreateTool(task_store),
+        TaskUpdateTool(task_store),
+        TaskListTool(task_store),
+    ]
 
     def _agent_factory(tools, system_prompt, max_turns):
         """Spawn a sub-agent sharing the parent's model and memory store."""
@@ -106,6 +118,7 @@ def _build_tools(mode: str, config: Config, inject_memory: bool = True,
     base_tools = [
         ReadTool(), WriteTool(), EditTool(), main_bash, GrepTool(), GlobTool(),
         WebSearchTool(), WebFetchTool(), TodoWriteTool(),
+        *task_tools,
         SkillTool(skill_system),
         RecallMemoryTool(memory_manager),
         RememberTool(memory_manager),
@@ -128,6 +141,9 @@ def _build_tools(mode: str, config: Config, inject_memory: bool = True,
                 WebSearchTool(),
                 WebFetchTool(),
                 TodoWriteTool(),
+                TaskCreateTool(task_store),
+                TaskUpdateTool(task_store),
+                TaskListTool(task_store),
                 SkillTool(skill_system),
                 RecallMemoryTool(memory_manager),
                 RememberTool(memory_manager),

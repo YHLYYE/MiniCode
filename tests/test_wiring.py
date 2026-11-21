@@ -16,13 +16,14 @@ def _unpack(mode):
 
 
 def test_normal_mode_registers_all_tools(tmp_path, monkeypatch):
-    """normal 模式应注册全部 13 个工具"""
+    """normal 模式应注册全部基础工具和持久任务图工具"""
     monkeypatch.chdir(tmp_path)  # 避免在真实项目目录创建 .minicode
     tools, _, _, memory_manager, _ = _unpack("normal")
     try:
         assert {t.name for t in tools} == {
             "Read", "Write", "Edit", "Bash", "Grep", "Glob",
             "WebSearch", "WebFetch", "TodoWrite",
+            "TaskCreate", "TaskUpdate", "TaskList",
             "Skill", "RecallMemory", "Remember", "Agent",
         }
     finally:
@@ -30,15 +31,29 @@ def test_normal_mode_registers_all_tools(tmp_path, monkeypatch):
 
 
 def test_plan_mode_keeps_only_readonly_tools(tmp_path, monkeypatch):
-    """plan 模式只保留只读工具 + TodoWrite（它只写 agent 自己的记账文件）"""
+    """plan 模式只能创建和查看计划，不能推进任务状态"""
     monkeypatch.chdir(tmp_path)
     tools, _, _, memory_manager, _ = _unpack("plan")
     try:
         assert {t.name for t in tools} == {
             "Read", "Grep", "Glob", "WebSearch", "WebFetch",
             "Skill", "RecallMemory",
-            "TodoWrite",  # 只读模式也要能写待办清单，否则「规划模式」写不了计划
+            "TodoWrite", "TaskCreate", "TaskList",
         }
+    finally:
+        memory_manager.close()
+
+
+def test_subagent_factory_reuses_parent_task_store(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    tools, _, _, memory_manager, _ = _build_tools(
+        "normal", Config(), isolate_subagents=True,
+    )
+    try:
+        parent = next(tool for tool in tools if tool.name == "TaskCreate")
+        agent = next(tool for tool in tools if tool.name == "Agent")
+        child_tools = agent._workspace_tool_factory(tmp_path / "child")
+        assert child_tools["TaskCreate"].store is parent.store
     finally:
         memory_manager.close()
 

@@ -328,7 +328,7 @@ class ExecutionMode(Enum):
 # Plan 模式承诺的是「不碰用户的代码」，而这个工具只写 agent 自己的记账文件
 # （.minicode/todos.md）。所以它可以进 Plan 模式 —— 否则「只读规划模式」里
 # 连待办清单都写不了。
-PLAN_MODE_EXTRA_TOOLS = {"TodoWrite"}
+PLAN_MODE_EXTRA_TOOLS = {"TodoWrite", "TaskCreate", "TaskList"}
 
 
 def resolve_tools_for_mode(tools: list, mode: ExecutionMode) -> list:
