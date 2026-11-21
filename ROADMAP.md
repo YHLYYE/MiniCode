@@ -17,12 +17,12 @@ The order below is "what I would do next and what it would cost", not a wish lis
 | Tools | 12 built-ins, grouped by `check_concurrency_safe()`; blocking I/O pushed to threads | `core/tools/` |
 | Multi-Agent | `AgentTool` routing: `explore` / `general` / `team` (research → code → verify pipeline) | `capabilities/multi_agent.py` |
 | Verification | Optional external command gate; failed evidence is fed back before completion | `capabilities/verification.py`, `core/agent_loop.py` |
-| Worktree isolation | Optional per-task worktrees for write-capable sub-agents; branch/commit returned, never auto-merged | `capabilities/worktree.py`, `capabilities/multi_agent.py` |
+| Worktree isolation | Optional per-task worktrees for write-capable sub-agents; file/search tools confined to the worktree, Bash is cwd/lexically guarded but not an OS sandbox; branch/commit returned and never auto-merged | `capabilities/worktree.py`, `capabilities/multi_agent.py` |
 | Skills | Progressive disclosure (full text stays out of the system prompt) + two-stage routing; top-k appended last so the prefix stays byte-identical | `capabilities/skill.py` |
 | Memory | Three types (procedural / episodic / profile), SQLite by default, pluggable store | `capabilities/memory.py` |
 | Security | 4 layers; every classifier failure path resolves to HIGH; Plan/Normal dual mode physically removes write tools | `capabilities/security.py` |
 | Cost | Per-model pricing via litellm, `--max-cost` circuit breaker, sub-agent usage rolled up into the parent ledger | `core/model_adapter.py`, `core/state.py` |
-| Quality gates | 268 tests, pyflakes gate, and `benchmarks/verify_claims.py` re-checking 14 documented claims against the code | `tests/`, `benchmarks/` |
+| Quality gates | 277 tests, pyflakes gate, and `benchmarks/verify_claims.py` re-checking 14 documented claims against the code | `tests/`, `benchmarks/` |
 
 ---
 

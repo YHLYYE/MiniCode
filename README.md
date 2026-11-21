@@ -2,7 +2,7 @@
 
 > Reference: Claude Code architecture (reverse-engineered from how-claude-code-works),
 > implemented in **~4,850 lines of pure Python** with **zero LangChain dependency**.
-> 268 unit tests (1 skipped), all passing.
+> 277 unit tests (1 skipped), all passing.
 
 A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill routing**,
 **3-tier Memory system**, **3-tier Context Compression with measurable benchmarks**,
@@ -136,6 +136,9 @@ python main.py "Implement the feature" --isolate-subagents
 Worktree；changes are committed to the task branch but are **not auto-merged**.
 `explore` stays read-only in the main workspace. Sub-agents still get only the base
 toolset and never receive the `Agent` tool, so recursive delegation is impossible.
+Read/Write/Edit/Grep/Glob are confined to the Worktree root. Bash starts in the
+Worktree and blocks obvious `cd`/`..`/absolute-path escapes, but this is **not an OS
+sandbox**; use a container when executing untrusted commands.
 
 ### Execution Modes
 
@@ -148,7 +151,7 @@ toolset and never receive the `Agent` tool, so recursive delegation is impossibl
 
 ```bash
 python -m pytest tests/ -v
-# 268 collected: 267 passed, 1 skipped
+# 277 collected: 276 passed, 1 skipped
 ```
 
 ---
@@ -186,7 +189,7 @@ minicode/
 ├── skills/                     # Skill definitions (markdown)
 │   └── code_review.md          # Example skill
 │
-└── tests/                      # 268 unit tests
+└── tests/                      # 277 unit tests
 ```
 
 ---

@@ -194,8 +194,10 @@ Worktree 管理必须满足：
 
 - Read/Write/Edit：相对路径从 Worktree 根解析；绝对路径必须在 Worktree 内；
 - Grep/Glob：默认根目录为 Worktree；
-- Bash：cwd 固定为 Worktree；
+- Bash：cwd 固定为 Worktree，并拒绝明显的 `cd`、`..`、Windows 盘符和 POSIX 绝对路径；
 - 拒绝 `../`、符号链接逃逸和跨 Worktree 路径。
+
+Bash 的上述限制是 cwd + 词法防护，不是操作系统级沙箱。命令仍可能通过解释器或间接方式越过词法规则；因此本项目不承诺 Bash 的强隔离，不可信命令必须使用容器或其他 OS 级沙箱。
 
 Project Memory、Skill 与模型适配器继续共享父级配置；文件、Shell 和搜索工具必须隔离。
 
@@ -291,7 +293,7 @@ testing   -> 同一 Worktree，运行测试
 1. 未使用新参数时，MiniCode 行为与当前一致；
 2. 配置验收命令后，模型无法在验收失败时结束任务；
 3. 验收重试耗尽时返回明确失败原因；
-4. 启用隔离后，可写子 Agent 不直接修改主工作区；
+4. 启用隔离后，文件与搜索工具不能访问主工作区；Bash 拦截常见逃逸语法，但明确标记为非沙箱；
 5. Team 的 coding/testing 在同一隔离分支中工作；
 6. Worktree 失败时不会静默退回主工作区；
 7. 子 Agent 不自动合并；

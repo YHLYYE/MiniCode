@@ -84,7 +84,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 268 个测试
+└── tests/                     # 277 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -1065,7 +1065,9 @@ if usage is not None:
 - `explore` 留在主工作区，只读执行；
 - `general` 创建独立 Worktree；
 - `team` 的 coding/testing 共用同一个 Worktree，research 仍在主工作区；
-- 文件、搜索与 Bash 工具绑定到 Worktree 根目录，不通过 `os.chdir`；
+- 文件、搜索工具严格限制在 Worktree 根目录，不通过 `os.chdir`；
+- Bash 从 Worktree 启动，并拦截明显的 `cd`、`..` 与绝对路径逃逸；
+- Bash 仍是 cwd + 词法防护，不是 OS 沙箱；不可信命令应使用容器；
 - 子 Agent 结果返回 branch、commit、changed files 和 diff stat；
 - 不自动 merge，且 dirty Git 工作区直接拒绝隔离。
 
