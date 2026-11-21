@@ -120,6 +120,17 @@ async def test_uncertain_same_subject_entries_are_marked_conflicted(tmp_path):
     assert store.get(first.id).conflict_group == store.get(second.id).conflict_group
 
 
+@pytest.mark.asyncio
+async def test_high_overlap_without_subject_key_is_marked_conflicted(tmp_path):
+    store = SQLiteMemoryStore(tmp_path / "mem.sqlite")
+    mm = MemoryManager(project_root=tmp_path, store=store)
+    first = await mm.record_procedural("提交前运行 pytest 再提交")
+    second = await mm.record_procedural("提交前运行 pytest 不用提交")
+
+    assert store.get(first.id).status == "conflicted"
+    assert store.get(second.id).status == "conflicted"
+
+
 def test_current_task_entry_is_not_injected_by_default(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
@@ -181,3 +192,19 @@ async def test_terminal_failure_increments_failure_count(tmp_path):
     mm.record_task_outcome(success=False)
 
     assert mm.search_sync("修复 NPE", top_k=1)[0].failure_count == 1
+
+
+@pytest.mark.asyncio
+async def test_successful_memory_outranks_failed_peer(tmp_path):
+    mm = MemoryManager(project_root=tmp_path)
+    good = await mm.record_procedural("pytest pre commit check")
+    bad = await mm.record_procedural("pytest pre commit skip")
+
+    mm.record_injection([good])
+    mm.record_task_outcome(success=True)
+    mm.record_injection([bad])
+    mm.record_task_outcome(success=False)
+
+    hits = mm.search_sync("pytest pre commit", top_k=2)
+
+    assert hits[0].id == good.id

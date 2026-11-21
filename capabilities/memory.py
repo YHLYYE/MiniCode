@@ -225,6 +225,14 @@ def _fingerprint(text: str) -> str:
     return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:16]
 
 
+def _topic_overlap(left: str, right: str) -> float:
+    a = set(keyword_tokens(left))
+    b = set(keyword_tokens(right))
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
 # ── Shared ranking helpers (used by all backends) ──
 
 def _normalize_key(s: str) -> str:
@@ -294,8 +302,10 @@ def _ranking_bonus(entry: dict, matched: set[str]) -> float:
     if matched:
         bonus *= 1.0 + 0.3 * (len(matched) - 1)
     retrieval = min(int(entry.get("retrieval_count", 0) or 0), 5)
-    adoption = min(max(int(entry.get("adoption_count", 0) or 0), 0), 5)
-    bonus *= 1.0 + 0.02 * retrieval + 0.05 * adoption
+    success = min(max(int(entry.get("success_count", 0) or 0), 0), 5)
+    failure = min(max(int(entry.get("failure_count", 0) or 0), 0), 5)
+    outcome = max(0.5, 1.0 + 0.05 * success - 0.03 * failure)
+    bonus *= (1.0 + 0.02 * retrieval) * outcome
     return bonus
 
 
@@ -1227,24 +1237,36 @@ class MemoryManager:
             and item.status != "superseded"
             and _fingerprint(item.content) != _fingerprint(entry.content)
         ]
-        if same_topic:
+        similar = []
+        if not same_topic and not entry.subject_key:
+            similar = [
+                item for item in existing
+                if item.scope == entry.scope
+                and not item.subject_key
+                and item.status != "superseded"
+                and _fingerprint(item.content) != _fingerprint(entry.content)
+                and _topic_overlap(item.content, entry.content) >= 0.6
+            ]
+        related = same_topic or similar
+        if related:
             if entry.source == "user_correction":
-                for item in same_topic:
+                superseded = same_topic or related
+                for item in superseded:
                     await asyncio.to_thread(
                         self._store.update_metadata,
                         item.id,
                         status="superseded",
                     )
-                newest = max(same_topic, key=lambda item: item.timestamp)
+                newest = max(superseded, key=lambda item: item.timestamp)
                 entry.supersedes_id = newest.id
             else:
                 group = next(
-                    (item.conflict_group for item in same_topic if item.conflict_group),
+                    (item.conflict_group for item in related if item.conflict_group),
                     f"cg_{time.time_ns()}",
                 )
                 entry.status = "conflicted"
                 entry.conflict_group = group
-                for item in same_topic:
+                for item in related:
                     await asyncio.to_thread(
                         self._store.update_metadata,
                         item.id,
