@@ -1,4 +1,5 @@
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -116,3 +117,60 @@ def test_apply_and_remove_require_permission():
     assert WorktreeApplyTool(manager).is_destructive is True
     assert WorktreeRemoveTool(manager).is_destructive is True
     assert WorktreeListTool(manager).is_readonly is True
+
+
+def test_corrupt_index_fails_closed(repo):
+    manager = WorktreeManager(repo)
+    manager.worktrees_root.mkdir(parents=True, exist_ok=True)
+    manager.index_path.write_text("{broken", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="corrupt"):
+        manager.list_entries()
+
+    assert manager.index_path.read_text(encoding="utf-8") == "{broken"
+
+
+def test_concurrent_index_updates_do_not_lose_entries(repo):
+    manager = WorktreeManager(repo)
+    first = manager.create("first")
+    second = manager.create("second")
+
+    def fail(branch):
+        manager.mark_failed(branch, "test failure")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(fail, [first.branch, second.branch]))
+
+    assert manager.find(first.branch)["status"] == "failed"
+    assert manager.find(second.branch)["status"] == "failed"
+
+
+def test_cherry_pick_conflict_aborts_and_preserves_ready_state(repo):
+    manager = WorktreeManager(repo)
+    handle = manager.create("conflict")
+    (handle.path / "a.txt").write_text("feature")
+    manager.commit(handle, "feature change", verification_status="passed")
+
+    (repo / "a.txt").write_text("main")
+    git(repo, "add", "a.txt")
+    git(repo, "commit", "-m", "main change")
+
+    with pytest.raises(RuntimeError):
+        manager.apply(handle.branch)
+
+    assert manager.find(handle.branch)["status"] == "ready"
+    assert handle.path.exists()
+    assert handle.branch in git(repo, "branch", "--list", handle.branch)
+    assert git(repo, "status", "--porcelain") == ""
+    assert not (repo / ".git" / "CHERRY_PICK_HEAD").exists()
+
+
+def test_apply_rejects_existing_git_sequencer_state(repo):
+    manager = WorktreeManager(repo)
+    handle = manager.create("sequencer")
+    (handle.path / "feature.txt").write_text("feature")
+    manager.commit(handle, "feature", verification_status="passed")
+    (repo / ".git" / "CHERRY_PICK_HEAD").write_text("dummy", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="Git operation"):
+        manager.apply(handle.branch)

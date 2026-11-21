@@ -6,11 +6,19 @@ import json
 import os
 import re
 import subprocess
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from core.tools.base import Tool
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+    import msvcrt
 
 
 @dataclass(frozen=True)
@@ -27,19 +35,21 @@ class WorktreeManager:
         self.repo_root = repo_root.resolve()
         self.worktrees_root = self.repo_root / ".minicode" / "worktrees"
         self.index_path = self.worktrees_root / "index.json"
+        self.index_lock_path = self.worktrees_root / "index.lock"
+        self._index_thread_lock = threading.RLock()
 
-    def _load_index(self) -> dict:
+    def _read_index_unlocked(self) -> dict:
         if not self.index_path.exists():
             return {"worktrees": []}
         try:
             data = json.loads(self.index_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return {"worktrees": []}
+        except (json.JSONDecodeError, OSError) as exc:
+            raise RuntimeError(f"worktree index is corrupt: {exc}") from exc
         if not isinstance(data, dict) or not isinstance(data.get("worktrees"), list):
-            return {"worktrees": []}
+            raise RuntimeError("worktree index is corrupt: invalid structure")
         return data
 
-    def _save_index(self, data: dict) -> None:
+    def _save_index_unlocked(self, data: dict) -> None:
         self.worktrees_root.mkdir(parents=True, exist_ok=True)
         temporary = self.index_path.with_suffix(".tmp")
         temporary.write_text(
@@ -48,6 +58,36 @@ class WorktreeManager:
             newline="\n",
         )
         os.replace(temporary, self.index_path)
+
+    @contextmanager
+    def _index_transaction(self):
+        with self._index_thread_lock:
+            self.worktrees_root.mkdir(parents=True, exist_ok=True)
+            handle = self.index_lock_path.open("a+", encoding="utf-8")
+            try:
+                if fcntl is not None:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                else:
+                    handle.seek(0, os.SEEK_END)
+                    if handle.tell() == 0:
+                        handle.write("\0")
+                        handle.flush()
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                data = self._read_index_unlocked()
+                yield data
+                self._save_index_unlocked(data)
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                else:
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                handle.close()
+
+    def _load_index(self) -> dict:
+        with self._index_transaction() as data:
+            return json.loads(json.dumps(data))
 
     def find(self, branch_or_id: str) -> dict | None:
         for entry in self._load_index()["worktrees"]:
@@ -59,13 +99,12 @@ class WorktreeManager:
         return list(self._load_index()["worktrees"])
 
     def _update_entry(self, branch: str, **changes) -> dict:
-        data = self._load_index()
-        for entry in data["worktrees"]:
-            if entry.get("branch") == branch:
-                entry.update(changes)
-                entry["updated_at"] = datetime.now(timezone.utc).isoformat()
-                self._save_index(data)
-                return entry
+        with self._index_transaction() as data:
+            for entry in data["worktrees"]:
+                if entry.get("branch") == branch:
+                    entry.update(changes)
+                    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+                    return dict(entry)
         raise RuntimeError(f"unknown worktree branch: {branch}")
 
     def _git(self, *args: str, cwd: Path | None = None) -> str:
@@ -126,23 +165,22 @@ class WorktreeManager:
             path=path.resolve(),
             base_commit=base_commit,
         )
-        data = self._load_index()
-        data["worktrees"].append(
-            {
-                "task_id": task_id,
-                "branch": branch,
-                "path": str(handle.path),
-                "base_commit": base_commit,
-                "status": "active",
-                "verification": "pending",
-                "verification_evidence": "",
-                "commit": None,
-                "changed_files": [],
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
-        )
-        self._save_index(data)
+        with self._index_transaction() as data:
+            data["worktrees"].append(
+                {
+                    "task_id": task_id,
+                    "branch": branch,
+                    "path": str(handle.path),
+                    "base_commit": base_commit,
+                    "status": "active",
+                    "verification": "pending",
+                    "verification_evidence": "",
+                    "commit": None,
+                    "changed_files": [],
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
         return handle
 
     def commit(
@@ -238,6 +276,15 @@ class WorktreeManager:
             raise RuntimeError("worktree must be verified and ready before apply")
         if self._git("status", "--porcelain"):
             raise RuntimeError("main working tree must be clean before apply")
+        git_dir = Path(self._git("rev-parse", "--git-dir"))
+        if not git_dir.is_absolute():
+            git_dir = (self.repo_root / git_dir).resolve()
+        for marker in (
+            "CHERRY_PICK_HEAD", "MERGE_HEAD", "REBASE_HEAD", "BISECT_LOG",
+            "rebase-merge", "rebase-apply",
+        ):
+            if (git_dir / marker).exists():
+                raise RuntimeError(f"Git operation already in progress: {marker}")
         commit = entry.get("commit")
         if not commit:
             raise RuntimeError("worktree has no commit to apply")
