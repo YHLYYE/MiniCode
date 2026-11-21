@@ -92,7 +92,7 @@ def test_corrupt_task_file_fails_closed(tmp_path):
 
 - [x] **Step 2: Run tests and verify they fail**
 
-Run: `python -m pytest tests/test_task_graph.py -q`  
+Run: `python -m pytest tests/test_task_graph.py -q`
 Expected: collection fails because `capabilities.task_graph` does not exist.
 
 - [x] **Step 3: Implement the store**
@@ -200,7 +200,7 @@ Also implement `_utc_now`, `_new_id`, `_validated_text`, `_find_task`, `_unfinis
 
 - [x] **Step 4: Run tests**
 
-Run: `python -m pytest tests/test_task_graph.py -q`  
+Run: `python -m pytest tests/test_task_graph.py -q`
 Expected: PASS for storage and state-machine tests.
 
 - [x] **Step 5: Commit**
@@ -251,7 +251,7 @@ async def test_blocked_count_is_derived_from_dependencies(tmp_path):
 
 - [x] **Step 2: Run tests and verify they fail**
 
-Run: `python -m pytest tests/test_task_graph.py -q`  
+Run: `python -m pytest tests/test_task_graph.py -q`
 Expected: import fails because the three tool classes are missing.
 
 - [x] **Step 3: Implement tools and rendering**
@@ -313,7 +313,7 @@ class TaskListTool(Tool):
 
 - [x] **Step 4: Run tests**
 
-Run: `python -m pytest tests/test_task_graph.py -q`  
+Run: `python -m pytest tests/test_task_graph.py -q`
 Expected: PASS.
 
 - [x] **Step 5: Commit**
@@ -368,7 +368,7 @@ def test_subagent_factory_reuses_parent_task_store(tmp_path, monkeypatch):
 
 - [x] **Step 2: Run tests and verify they fail**
 
-Run: `python -m pytest tests/test_wiring.py -q`  
+Run: `python -m pytest tests/test_wiring.py -q`
 Expected: task tools are absent; Plan-mode assertions fail.
 
 - [x] **Step 3: Wire the store into main**
@@ -419,7 +419,7 @@ Do not add `TaskUpdate`; plan mode creates and views plans but cannot claim exec
 
 - [x] **Step 5: Run wiring tests**
 
-Run: `python -m pytest tests/test_wiring.py -q`  
+Run: `python -m pytest tests/test_wiring.py -q`
 Expected: PASS.
 
 - [x] **Step 6: Commit**
@@ -465,7 +465,7 @@ def test_prompt_reports_corrupt_graph_without_crashing(tmp_path, monkeypatch):
 
 - [x] **Step 2: Run tests and verify they fail**
 
-Run: `python -m pytest tests/test_task_graph.py -q`  
+Run: `python -m pytest tests/test_task_graph.py -q`
 Expected: `prompt_hint` is absent or prompt does not include the dynamic section.
 
 - [x] **Step 3: Add prompt parameter and renderer**
@@ -503,7 +503,7 @@ Pass `task_graph_hint=task_graph_hint()` into `build_system_prompt()`.
 
 - [x] **Step 5: Run prompt tests**
 
-Run: `python -m pytest tests/test_task_graph.py tests/test_wiring.py -q`  
+Run: `python -m pytest tests/test_task_graph.py tests/test_wiring.py -q`
 Expected: PASS.
 
 - [x] **Step 6: Commit**
@@ -527,7 +527,7 @@ async def test_task_graph_tool_result_becomes_compression_anchor(tmp_path, monke
     monkeypatch.chdir(tmp_path)
     from capabilities.task_graph import TaskCreateTool, TaskGraphStore
 
-    model = _MockModel([[ 
+    model = _MockModel([[
         _Chunk(type="tool_use_start", name="TaskCreate", input={"subject": "实现压缩锚点"}, tool_call_id="t1"),
         _Chunk(type="message_stop", stop_reason="tool_use", usage=_Usage()),
     ], [
@@ -541,7 +541,7 @@ async def test_task_graph_tool_result_becomes_compression_anchor(tmp_path, monke
 
 - [x] **Step 2: Run test and verify it fails**
 
-Run: `python -m pytest tests/test_task_anchor.py::test_task_graph_tool_result_becomes_compression_anchor -q`  
+Run: `python -m pytest tests/test_task_anchor.py::test_task_graph_tool_result_becomes_compression_anchor -q`
 Expected: anchor remains empty.
 
 - [x] **Step 3: Register graph snapshots**
@@ -557,7 +557,7 @@ elif tool_name in TASK_GRAPH_TOOLS and "## Task Graph" in result:
 
 - [x] **Step 4: Run all compression-anchor tests**
 
-Run: `python -m pytest tests/test_task_anchor.py -q`  
+Run: `python -m pytest tests/test_task_anchor.py -q`
 Expected: PASS; existing TodoWrite behavior remains green.
 
 - [x] **Step 5: Commit**
@@ -576,7 +576,7 @@ git commit -m "feat: preserve task graph across compression"
 
 - [x] **Step 1: Run the full suite before documentation numbers**
 
-Run: `python -m pytest -q`  
+Run: `python -m pytest -q`
 Expected: all tests pass; record the exact passed/skipped count for documentation.
 
 - [x] **Step 2: Document verified behavior**

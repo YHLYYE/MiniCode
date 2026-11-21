@@ -355,4 +355,3 @@ class TaskListTool(Tool):
 
     async def execute(self, include_completed: bool = False) -> str:
         return self.store.render_snapshot(include_completed=include_completed)
-
