@@ -84,7 +84,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 289 个测试
+└── tests/                     # 293 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -1095,6 +1095,8 @@ Worktree 根目录为 cwd 执行。验收失败时保留现场且不提交，避
 - Apply/Remove 都标记为 destructive，必须经过权限确认。
 
 生命周期索引写入 `.minicode/worktrees/index.json`，状态包括 active、ready、ready_unverified、verify_failed、failed、applied、removed。
+索引读改写使用跨线程/跨进程文件锁；损坏 JSON 直接失败，不覆盖原文件。
+Apply 还会拒绝已有 merge/rebase/cherry-pick/bisect 状态的仓库。
 
 ---
 

@@ -2,7 +2,7 @@
 
 > Reference: Claude Code architecture (reverse-engineered from how-claude-code-works),
 > implemented in **~4,850 lines of pure Python** with **zero LangChain dependency**.
-> 289 unit tests (1 skipped), all passing.
+> 293 unit tests (1 skipped), all passing.
 
 A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill routing**,
 **3-tier Memory system**, **3-tier Context Compression with measurable benchmarks**,
@@ -155,7 +155,9 @@ When isolation is enabled, three lifecycle tools are added:
 
 `WorktreeApply` and `WorktreeRemove` are destructive and pass through MiniCode's
 permission confirmation. Unverified branches cannot be applied. The lifecycle index
-is stored in `.minicode/worktrees/index.json`.
+is stored in `.minicode/worktrees/index.json` under a cross-process lock; corrupt
+indexes fail closed. Apply refuses to start while a merge/rebase/cherry-pick is
+already in progress.
 
 ### Execution Modes
 
@@ -168,7 +170,7 @@ is stored in `.minicode/worktrees/index.json`.
 
 ```bash
 python -m pytest tests/ -v
-# 289 collected: 288 passed, 1 skipped
+# 293 collected: 292 passed, 1 skipped
 ```
 
 ---
@@ -206,7 +208,7 @@ minicode/
 ├── skills/                     # Skill definitions (markdown)
 │   └── code_review.md          # Example skill
 │
-└── tests/                      # 289 unit tests
+└── tests/                      # 293 unit tests
 ```
 
 ---

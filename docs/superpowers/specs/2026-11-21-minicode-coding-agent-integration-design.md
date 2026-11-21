@@ -230,6 +230,10 @@ cwd 执行外部验收。验收失败时：
 
 Apply 与 Remove 均为 destructive 工具，必须经过人工权限确认。
 
+生命周期索引的读改写必须受跨进程锁保护，损坏索引 fail-closed。Apply 在任何既有
+merge、rebase、cherry-pick 或 bisect 状态下拒绝执行；冲突 abort 后保留 ready
+状态、分支和 Worktree 现场。
+
 ## 7. Team 流程
 
 启用 Worktree 后：
