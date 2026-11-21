@@ -196,6 +196,7 @@ def _build_tools(mode: str, config: Config, inject_memory: bool = True,
         if inject_memory and task.strip():
             hits = memory_manager.search_sync(
                 task, top_k=MEMORY_HINT_TOP_K,
+                scope="persistent",
                 # 注入用更严的相关性下限：手动查询宁可多给（0.01），
                 # 但自动注入的要求是"别吵"，否则无关任务也会带进旧经验。
                 min_similarity=MEMORY_INJECT_MIN_SIMILARITY,

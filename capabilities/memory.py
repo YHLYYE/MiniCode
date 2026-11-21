@@ -488,12 +488,19 @@ def format_memory_hint(entries: list, top_k: int = MEMORY_HINT_TOP_K,
         if not content:
             continue
         label = _TYPE_LABELS.get(getattr(entry, "type", ""), getattr(entry, "type", ""))
-        line = f"- [{label}] {content}"
+        conflict = " [存在冲突]" if getattr(entry, "status", "active") == "conflicted" else ""
+        line = f"- [{label}]{conflict} {content}"
         if used + len(line) > max_chars:
             break
         lines.append(line)
         used += len(line)
-    return "\n".join(lines) if len(lines) > 1 else ""
+    if len(lines) == 1:
+        return ""
+    if any(getattr(entry, "status", "active") == "conflicted" for entry in entries[:top_k]):
+        note = "历史记录，仅供参考；多条记录冲突时请以当前代码和用户请求为准。"
+        if used + len(note) + 1 <= max_chars:
+            lines.append(note)
+    return "\n".join(lines)
 
 
 def _rank_episodic(entries: list[dict], query: str, top_k: int,

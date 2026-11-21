@@ -1,13 +1,17 @@
+import asyncio
 import sqlite3
 
 import pytest
 
+from config import Config
 from capabilities.memory import (
     MemoryEntry,
     MemoryManager,
     MemoryType,
     SQLiteMemoryStore,
+    format_memory_hint,
 )
+from main import _build_tools
 
 
 def test_old_sqlite_rows_migrate_with_safe_defaults(tmp_path):
@@ -114,3 +118,44 @@ async def test_uncertain_same_subject_entries_are_marked_conflicted(tmp_path):
     assert store.get(first.id).status == "conflicted"
     assert store.get(second.id).status == "conflicted"
     assert store.get(first.id).conflict_group == store.get(second.id).conflict_group
+
+
+def test_current_task_entry_is_not_injected_by_default(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    async def seed():
+        mm = MemoryManager(project_root=tmp_path)
+        await mm.record_procedural(
+            "本次任务临时使用 /tmp/build，清理后再提交",
+            scope="current_task",
+            source="task_log",
+        )
+        mm.close()
+
+    asyncio.run(seed())
+    _, _, _, memory_manager, prompt_factory = _build_tools("normal", Config())
+    try:
+        prompt = prompt_factory("本次任务临时使用 /tmp/build")
+        assert "/tmp/build" not in prompt
+    finally:
+        memory_manager.close()
+
+
+def test_conflicted_memory_hint_is_labeled():
+    first = MemoryEntry.make(
+        MemoryType.PROCEDURAL,
+        "提交前先跑 pytest",
+        status="conflicted",
+        conflict_group="cg_1",
+    )
+    second = MemoryEntry.make(
+        MemoryType.PROCEDURAL,
+        "提交前不用跑 pytest",
+        status="conflicted",
+        conflict_group="cg_1",
+    )
+
+    hint = format_memory_hint([first, second])
+
+    assert "[存在冲突]" in hint
+    assert "历史记录，仅供参考" in hint
