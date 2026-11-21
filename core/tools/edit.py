@@ -41,6 +41,12 @@ class EditTool(Tool):
 
     async def execute(self, file_path: str, old_string: str,
                       new_string: str) -> str:
+        resolver = getattr(self._backend, "resolve", None)
+        if callable(resolver):
+            try:
+                resolver(file_path)
+            except PermissionError as e:
+                return f"Error: {e}"
         if not self._backend.exists(file_path):
             return f"Error: File not found: {file_path}"
         if not old_string:

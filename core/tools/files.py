@@ -28,6 +28,12 @@ class ReadTool(Tool):
         self._backend = backend or LocalFilesystemBackend(workspace_root)
 
     async def execute(self, file_path: str) -> str:
+        resolver = getattr(self._backend, "resolve", None)
+        if callable(resolver):
+            try:
+                resolver(file_path)
+            except PermissionError as e:
+                return f"Error: {e}"
         if not self._backend.exists(file_path):
             return f"Error: File not found: {file_path}"
         if self._backend.is_dir(file_path):

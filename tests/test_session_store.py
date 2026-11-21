@@ -1,7 +1,7 @@
 """SessionStore 持久化测试 — 保存/加载/列表/删除"""
 import pytest
 from session_store import SessionStore
-from core.state import LoopState, Message, ContinueReason
+from core.state import LoopState, Message, ContinueReason, TerminationReason
 
 
 @pytest.fixture
@@ -91,3 +91,13 @@ def test_last_transition_is_none_when_not_recorded(store):
     """没有记录时返回 None，别编一个原因出来。"""
     assert store.last_transition(store.save(_make_state())) is None
     assert store.last_transition("does_not_exist") is None
+
+
+def test_termination_reason_survives_roundtrip(store):
+    state = _make_state().with_field(
+        termination_reason=TerminationReason.VERIFY_FAILED
+    )
+
+    loaded = store.load(store.save(state))
+
+    assert loaded.termination_reason == TerminationReason.VERIFY_FAILED

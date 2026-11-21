@@ -126,3 +126,35 @@ async def test_team_coding_and_testing_share_one_worktree(repo):
     assert coding_root == testing_root
     assert "changed_files: ['team.txt']" in result
     assert not (repo / "team.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_general_failure_reports_preserved_worktree(repo):
+    def factory(tools, system_prompt, max_turns):
+        by_name = {tool.name: tool for tool in tools}
+
+        class FakeLoop:
+            async def run(self, task):
+                await by_name["Write"].execute(
+                    file_path="partial.txt", content="partial"
+                )
+                raise RuntimeError("subagent crashed")
+                yield  # pragma: no cover
+
+        return FakeLoop()
+
+    agent_tool = AgentTool(
+        agent_loop_factory=factory,
+        tool_registry={},
+        worktree_manager=WorktreeManager(repo),
+        workspace_tool_factory=lambda root: {
+            "Write": WriteTool(workspace_root=root),
+        },
+        isolate_subagents=True,
+    )
+
+    result = await agent_tool.execute("crash after write", agent_type="general")
+
+    assert "branch: minicode/" in result
+    assert "path:" in result
+    assert not (repo / "partial.txt").exists()

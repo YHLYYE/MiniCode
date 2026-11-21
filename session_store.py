@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from core.state import LoopState, Message, ContinueReason
+from core.state import LoopState, Message, ContinueReason, TerminationReason
 
 
 class SessionStore:
@@ -51,6 +51,10 @@ class SessionStore:
             # 存档时记下"最后一轮为什么结束/继续"。它**不进 LoopState**（见 load），
             # 只作为元信息，让 --resume 时能说一句"上次结束于：输出被截断"。
             "last_transition": state.transition.value if state.transition else None,
+            "termination_reason": (
+                state.termination_reason.value
+                if state.termination_reason else None
+            ),
         }
 
         path = self._dir / f"{session_id}.json"
@@ -80,6 +84,15 @@ class SessionStore:
             for m in data.get("messages", [])
         )
 
+        raw_termination = data.get("termination_reason")
+        try:
+            termination_reason = (
+                TerminationReason(raw_termination)
+                if raw_termination else None
+            )
+        except ValueError:
+            termination_reason = None
+
         return LoopState(
             messages=messages,
             turn_count=data.get("turn_count", 0),
@@ -93,6 +106,7 @@ class SessionStore:
             # 这一轮的"为什么继续"还没发生。那份旧值只用于展示（见 last_transition）。
             transition=ContinueReason.NEXT_TURN,
             active_skills=tuple(data.get("active_skills", [])),
+            termination_reason=termination_reason,
         )
 
     def last_transition(self, session_id: str) -> ContinueReason | None:

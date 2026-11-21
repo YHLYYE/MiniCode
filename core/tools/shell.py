@@ -39,15 +39,31 @@ class BashTool(Tool):
     is_destructive = True
 
     DANGEROUS_PATTERNS = DANGEROUS_COMMAND_PATTERNS
+    WORKSPACE_ESCAPE_PATTERNS = (
+        r"(?:^|[&|;]\s*)(?:cd|pushd|set-location|chdir)\b",
+        r"(?:^|[\\/])\.\.(?:[\\/]|$)",
+        r"(?:^|[\s\"'])[A-Za-z]:[\\/]",
+        r"(?:^|[\s\"'])\\\\",
+        r"(?:^|[\s\"'])/(?!/)",
+    )
     MAX_EXECUTION_TIME = 60
 
     def __init__(self, workspace_root: Path | None = None):
         super().__init__()
-        self._workspace_root = (
-            workspace_root.resolve() if workspace_root else Path.cwd().resolve()
-        )
+        self._workspace_root = workspace_root.resolve() if workspace_root else None
+
+    def _check_workspace_command(self, command: str) -> None:
+        if self._workspace_root is None:
+            return
+        for pattern in self.WORKSPACE_ESCAPE_PATTERNS:
+            if re.search(pattern, command, re.IGNORECASE):
+                raise SecurityBlock(
+                    f"Blocked (workspace escape pattern): {command[:100]}"
+                )
 
     async def execute(self, command: str, timeout: int = 30) -> str:
+        self._check_workspace_command(command)
+
         # L1: Dangerous pattern detection
         for pattern, reason in self.DANGEROUS_PATTERNS:
             if re.search(pattern, command, re.IGNORECASE):
@@ -59,7 +75,7 @@ class BashTool(Tool):
         timeout = min(timeout, self.MAX_EXECUTION_TIME)
 
         # L3: Working directory confinement
-        cwd = self._workspace_root
+        cwd = self._workspace_root or Path.cwd().resolve()
 
         proc = None
         try:

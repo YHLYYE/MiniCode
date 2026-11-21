@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import locale
+import os
+import signal
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,19 +44,24 @@ class CommandVerifier:
     async def verify(self) -> VerificationResult:
         process = None
         try:
+            popen_kwargs = (
+                {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+                if os.name == "nt"
+                else {"start_new_session": True}
+            )
             process = await asyncio.create_subprocess_shell(
                 self.command,
                 cwd=str(self.cwd),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                **popen_kwargs,
             )
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(), timeout=self.timeout_seconds
             )
         except asyncio.TimeoutError:
             if process is not None:
-                process.kill()
-                await process.wait()
+                await _terminate_process_tree(process)
             return VerificationResult(
                 command=self.command,
                 passed=False,
@@ -62,8 +71,7 @@ class CommandVerifier:
             )
         except Exception as exc:
             if process is not None and process.returncode is None:
-                process.kill()
-                await process.wait()
+                await _terminate_process_tree(process)
             return VerificationResult(
                 command=self.command,
                 passed=False,
@@ -72,10 +80,41 @@ class CommandVerifier:
             )
 
         combined = b"\n".join(part for part in (stdout, stderr) if part)
-        decoded = combined.decode("utf-8", errors="replace")
+        decoded = _decode_output(combined)
         return VerificationResult(
             command=self.command,
             passed=process.returncode == 0,
             exit_code=process.returncode,
             output=decoded[-self.max_output_chars :],
         )
+
+
+async def _terminate_process_tree(process) -> None:
+    """Terminate the shell and its descendants on Windows and POSIX."""
+    if process.returncode is not None:
+        return
+    if os.name == "nt":
+        await asyncio.to_thread(
+            subprocess.run,
+            ["taskkill", "/T", "/F", "/PID", str(process.pid)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    try:
+        await asyncio.wait_for(process.wait(), timeout=1)
+    except asyncio.TimeoutError:
+        process.kill()
+        await process.wait()
+
+
+def _decode_output(data: bytes) -> str:
+    encoding = locale.getpreferredencoding(False)
+    try:
+        return data.decode(encoding)
+    except (UnicodeDecodeError, LookupError):
+        return data.decode("utf-8", errors="replace")

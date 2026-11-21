@@ -165,6 +165,7 @@ class AgentTool(Tool):
             return (f"Unknown agent_type: {agent_type!r}. "
                     f"Use one of {sorted(self.AGENT_PROFILES)} or 'team'.")
         async with self._semaphore:
+            handle = None
             try:
                 if (
                     agent_type == "general"
@@ -192,6 +193,13 @@ class AgentTool(Tool):
                 else:
                     result = await self._run_subagent(task, profile)
             except Exception as e:
+                if handle is not None:
+                    return (
+                        f"Sub-agent ({agent_type}) failed: {e}\n"
+                        f"branch: {handle.branch}\n"
+                        f"path: {handle.path}\n"
+                        "status: failed (worktree preserved)"
+                    )
                 return f"Sub-agent ({agent_type}) failed: {e}"
         self._record_subagent_usage(result)
 
