@@ -14,6 +14,7 @@ from core.state import (
     RecoveryNotice, BudgetExceeded,
 )
 from core.model_adapter import ModelAdapter, Usage
+from core.hooks import HookDecision, HookEvent, HookRegistry
 from core.tools.base import Tool, ToolCall
 from capabilities.compression import ContextCompressor
 from capabilities.memory import MemoryManager
@@ -102,6 +103,7 @@ class AgentLoop:
         system_prompt_factory=None,
         verifier=None,
         verify_retries: int = 2,
+        hook_registry: HookRegistry | None = None,
     ):
         self._tools = {t.name: t for t in tools}
         self._model = model_adapter
@@ -117,6 +119,8 @@ class AgentLoop:
         self._verification_failures = 0
         self._compressor = ContextCompressor()
         self._permission = PermissionManager(model=model_adapter)
+        self._hooks = hook_registry or HookRegistry()
+        self._hooks.register(HookEvent.BEFORE_TOOL, self._authorize_tool)
         # 任务级的失败/修法追踪 —— 用来在任务结束时"提炼"一条经验：
         # 本轮出过什么错、之后用哪个编辑修好了。（见 _record_task_done）
         self._task_errors: list[ToolError] = []
@@ -125,6 +129,19 @@ class AgentLoop:
     @property
     def state(self) -> LoopState | None:
         return self._state
+
+    async def _authorize_tool(self, call: ToolCall, tool: Tool) -> HookDecision:
+        try:
+            allowed = await self._permission.authorize(
+                call,
+                getattr(tool, "is_destructive", False),
+            )
+        except SecurityBlock as exc:
+            return HookDecision(allow=False, reason=f"Security blocked: {exc}")
+        return HookDecision(
+            allow=allowed,
+            reason="" if allowed else "Permission denied by user.",
+        )
 
     async def run(self, task: str, resume_state: LoopState | None = None):
         """Main entry point — async generator yielding UI events.
@@ -135,6 +152,7 @@ class AgentLoop:
                           enabling multi-task conversation in the same loop)
         """
         self._current_task = task
+        await self._hooks.emit(HookEvent.USER_PROMPT, task)
         self._task_errors = []
         self._fix_evidence = None
         self._verification_failures = 0
@@ -166,6 +184,8 @@ class AgentLoop:
         state = _with_system_prompt(state, system_prompt)
 
         async for event in self._query_loop(state):
+            if isinstance(event, DoneEvent):
+                await self._hooks.emit(HookEvent.STOP, event.state)
             yield event
 
     def _resolve_system_prompt(self, task: str) -> str:
@@ -229,7 +249,13 @@ class AgentLoop:
             )
 
             # ── 0. Context compression check ──
+            state_before_compression = self._state
             self._state = await self._compressor.compress_if_needed(self._state)
+            await self._hooks.emit(
+                HookEvent.AFTER_COMPRESSION,
+                state_before_compression,
+                self._state,
+            )
 
             # ── 1. Build API request ──
             tool_schemas = [t.to_schema() for t in self._tools.values()]
@@ -241,6 +267,13 @@ class AgentLoop:
                 if m.tool_calls:
                     entry["tool_calls"] = m.tool_calls
                 messages_list.append(entry)
+
+            await self._hooks.emit(
+                HookEvent.BEFORE_MODEL,
+                self._state,
+                messages_list,
+                tool_schemas,
+            )
 
             # ── 2. Streaming API call ──
             # messages_list[0] 已是 system 消息，不再单独传 system=，
@@ -314,6 +347,14 @@ class AgentLoop:
                 raise
             # 流式成功 → 重置连续失败计数（网络恢复后重新计数）
             stream_retries = 0
+            await self._hooks.emit(
+                HookEvent.AFTER_MODEL,
+                self._state,
+                "".join(assistant_text_parts),
+                tuple(tool_calls),
+                usage,
+                stop_reason,
+            )
 
             # ── 3. Track costs (fail-fast on budget) ──
             self._state = self._state.accumulate_usage(usage, self._turn_cost(usage))
@@ -495,30 +536,61 @@ class AgentLoop:
                     return (tool_name, tool_call_id, tool_input, None,
                             f"Error: Tool '{tool_name}' not found. "
                             f"Available: {available}")
+                tc = ToolCall(tool_name, tool_input)
                 try:
-                    # Security check before execution（fail-closed：False 拒绝执行）
-                    tc = ToolCall(tool_name, tool_input)
-                    if not await self._permission.authorize(
-                        tc, getattr(tool, "is_destructive", False)
-                    ):
-                        result = "Permission denied by user."
-                    else:
-                        result = await tool.execute(**tool_input)
-                        # 截断超长结果，防止单条工具输出塞爆上下文
-                        result = truncate_result(result)
-                    # 工具自己报告的用量（目前只有 AgentTool 会实现）
-                    drain = getattr(tool, "drain_usage", None)
-                    usage = drain() if callable(drain) else None
-                    return (tool_name, tool_call_id, tool_input, usage, result)
-                except SecurityBlock as e:
-                    return (tool_name, tool_call_id, tool_input, None,
-                            f"Security blocked: {e}")
+                    decisions = await self._hooks.emit(
+                        HookEvent.BEFORE_TOOL,
+                        tc,
+                        tool,
+                    )
+                    denial = next(
+                        (
+                            decision for decision in decisions
+                            if isinstance(decision, HookDecision)
+                            and not decision.allow
+                        ),
+                        None,
+                    )
                 except Exception as e:
                     err = ToolError(tool_name, str(e))
                     tool_errors.append(err)
                     self._task_errors.append(err)
                     return (tool_name, tool_call_id, tool_input, None,
                             f"Tool error: {e}")
+
+                if denial is not None:
+                    result = denial.reason or "Permission denied."
+                else:
+                    try:
+                        result = await tool.execute(**tool_input)
+                        # 截断超长结果，防止单条工具输出塞爆上下文
+                        result = truncate_result(result)
+                    except SecurityBlock as e:
+                        result = f"Security blocked: {e}"
+                    except Exception as e:
+                        err = ToolError(tool_name, str(e))
+                        tool_errors.append(err)
+                        self._task_errors.append(err)
+                        result = f"Tool error: {e}"
+
+                try:
+                    await self._hooks.emit(
+                        HookEvent.AFTER_TOOL,
+                        tc,
+                        tool,
+                        result,
+                    )
+                except Exception as e:
+                    err = ToolError(tool_name, str(e))
+                    tool_errors.append(err)
+                    self._task_errors.append(err)
+                    return (tool_name, tool_call_id, tool_input, None,
+                            f"Tool error: {e}")
+
+                # 工具自己报告的用量（目前只有 AgentTool 会实现）
+                drain = getattr(tool, "drain_usage", None)
+                usage = drain() if callable(drain) else None
+                return (tool_name, tool_call_id, tool_input, usage, result)
 
             # 分组执行：并发安全工具 gather 并行；遇到不安全的先 drain 再串行
             executed = []  # (tool_name, tool_call_id, input, usage, result)，保持原顺序

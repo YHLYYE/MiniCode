@@ -2,7 +2,7 @@
 
 > Reference: Claude Code architecture (reverse-engineered from how-claude-code-works),
 > implemented in **~7,350 lines of pure Python** with **zero LangChain dependency**.
-> 344 tests (1 skipped), all passing.
+> 350 tests with explicit environment-dependent skips; core behavior is covered locally.
 
 A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill routing**,
 **scoped conflict-aware Memory**, **3-tier Context Compression with measurable benchmarks**,
@@ -24,6 +24,7 @@ and **4-layer security**.
 | 7 | **4-layer Security + Plan/Normal Dual Mode** | Rule filter (dangerous commands + path allowlist) → Tool self-check → AI risk classifier → Human confirmation. Every destructive tool (Bash / Write / Edit) reaches L3 — including the ones that discard uncommitted work (`git reset --hard`, `git checkout --`, `git branch -D`); whitelisted read-only Bash commands are the only thing that short-circuits. Every classifier failure path (no model / exception / out-of-vocabulary risk / unparseable JSON) resolves to HIGH, never a silent pass. Plan mode physically removes write tools |
 | 8 | **Concurrent Tool Execution** | Tools declaring `is_concurrency_safe` run together via `asyncio.gather`; blocking I/O (file / network / SQLite) is pushed to threads with `asyncio.to_thread`, so reading N files costs 1× latency instead of N× |
 | 9 | **Persistent Task Graph** | `TaskCreate / TaskUpdate / TaskList` store dependency-aware tasks in `.minicode/tasks.json`. Dependencies and state transitions are enforced by the store; snapshots survive session restart and context compression |
+| 10 | **Lifecycle Hook Registry** | Typed callbacks run in registration order at prompt, model, compression, tool and stop boundaries. A `BEFORE_TOOL` hook can deny execution; hook failures are wrapped and fail closed instead of silently running the tool |
 
 ---
 
@@ -99,7 +100,8 @@ cherry-pick 冲突回滚      1
                     │  │  (while-true + 4    │  (litellm unified) │ │
                     │  │   recovery paths)   │                    │ │
                     │  └──────────┬─────────┴────────────────────┘ │
-                    │             │                                │
+                    │             │  hooks.py: ordered lifecycle   │
+                    │             ▼  prompt/model/tool/stop events  │
                     │  ┌──────────▼───────────────────────────────┐│
                     │  │    tools/  files | shell | web | task ... ││
                     │  │         base.py (SkillTool / RecallMem)  ││
@@ -240,13 +242,44 @@ has no claims, leases or background scheduler.
 - **Normal**: Full tool access
 - **Plan**: Read-only — write tools physically removed from schema
 
+### Lifecycle hooks
+
+`core/hooks.py` exposes a small typed registry rather than a global callback
+dictionary. Callbacks execute in registration order and may be synchronous or
+asynchronous. `AgentLoop` accepts an optional `HookRegistry` through
+`hook_registry=...`.
+
+```python
+from core.hooks import HookDecision, HookEvent, HookRegistry
+
+hooks = HookRegistry()
+
+async def audit_tool(call, tool):
+    print(tool.name, call.input)
+
+hooks.register(HookEvent.BEFORE_TOOL, audit_tool)
+
+async def deny_production_write(call, tool):
+    if tool.name == "Write" and "prod" in call.input.get("file_path", ""):
+        return HookDecision(allow=False, reason="production writes are disabled")
+
+hooks.register(HookEvent.BEFORE_TOOL, deny_production_write)
+loop = AgentLoop(..., hook_registry=hooks)
+```
+
+Events run at `USER_PROMPT`, `AFTER_COMPRESSION`, `BEFORE_MODEL`,
+`AFTER_MODEL`, `BEFORE_TOOL`, `AFTER_TOOL` and `STOP`. A synchronous or
+asynchronous hook exception is wrapped as `HookError`; a failed tool hook is
+recorded as a tool error and prevents execution. The built-in permission review
+is itself registered as a `BEFORE_TOOL` hook.
+
 ---
 
 ## 🧪 Tests
 
 ```bash
 python -m pytest tests/ -v
-# 344 collected: 343 passed, 1 skipped
+# 350 collected
 ```
 
 ---
@@ -263,6 +296,7 @@ minicode/
 │
 ├── core/                       # Low-level agent engine
 │   ├── agent_loop.py           # While-true loop + state machine + recovery
+│   ├── hooks.py                # Ordered lifecycle hook registry
 │   ├── model_adapter.py        # litellm unified Tool Use protocol
 │   ├── state.py                # LoopState (immutable, message accumulation)
 │   └── tools/                  # 13 tool implementations
@@ -284,7 +318,7 @@ minicode/
 ├── skills/                     # Skill definitions (markdown)
 │   └── code_review.md          # Example skill
 │
-└── tests/                      # 344 tests
+└── tests/                      # 350 tests
 ```
 
 ---

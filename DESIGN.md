@@ -85,7 +85,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 344 个测试
+└── tests/                     # 350 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -409,6 +409,47 @@ class ModelAdapter:
 ```
 
 > **设计价值**：Anthropic 的 `tool_use` block 和 OpenAI 的 `tool_calls` + `tool_call_id` 关联是两套完全不同的协议。litellm 在适配层归一化，Agent Loop 完全不感知 provider 差异——这是"隔离变化"原则的落地。
+
+### 2.7 生命周期钩子（运行时扩展点）
+
+`core/hooks.py` 把“在哪里挂能力”从主循环代码里抽成固定事件。注册表本身不理解
+Agent 状态，只负责按注册顺序串行执行同步或异步回调；事件参数和结果解释仍由
+`AgentLoop` 掌握，避免把核心状态暴露给任意扩展。
+
+```python
+from core.hooks import HookDecision, HookEvent, HookRegistry
+
+hooks = HookRegistry()
+
+async def audit_tool(call, tool):
+    print(tool.name, call.input)
+
+async def block_prod_write(call, tool):
+    if tool.name == "Write" and "prod" in call.input.get("file_path", ""):
+        return HookDecision(allow=False, reason="production writes are disabled")
+
+hooks.register(HookEvent.BEFORE_TOOL, audit_tool)
+hooks.register(HookEvent.BEFORE_TOOL, block_prod_write)
+
+loop = AgentLoop(..., hook_registry=hooks)
+```
+
+事件顺序：
+
+```text
+USER_PROMPT
+  -> AFTER_COMPRESSION
+  -> BEFORE_MODEL
+  -> AFTER_MODEL
+  -> BEFORE_TOOL
+       -> 任一 HookDecision(allow=False)：拒绝执行
+       -> 全部允许：执行工具 -> AFTER_TOOL
+  -> STOP（产出 DoneEvent 前）
+```
+
+权限审查已注册成内置 `BEFORE_TOOL` 钩子，原有四层链路不变，外部钩子可以额外拒绝。
+回调异常包装为 `HookError`；工具前置钩子失败时不执行工具，按 fail-closed 回灌错误。
+这层只解决扩展点，不做动态插件发现，也不允许任意钩子改写工具参数。
 
 ---
 
