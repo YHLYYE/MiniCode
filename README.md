@@ -297,6 +297,10 @@ tests. Tests are copied in only after the session ends, so `claimed completion`
 cannot inflate the pass rate. Missing provider credentials fail before a report
 is created.
 
+The archived first repeated run on `deepseek-chat` passed 54/60 runs with 2
+false completions. A later prompt-ambiguity fix for `normalize_relative_path`
+passed 3/3 in a separately archived rerun; the two reports are not merged.
+
 ---
 
 ## 🧪 Tests

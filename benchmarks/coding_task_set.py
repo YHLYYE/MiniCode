@@ -225,7 +225,7 @@ def test_greedy_wrap():
     CodingTask(
         id="normalize_relative_path",
         category="parsing",
-        prompt="修复 normalize_relative_path：去掉空段和 .，统一斜杠，并拒绝 .. 越界。",
+        prompt="修复 normalize_relative_path：去掉空段和 .，统一斜杠；任何 .. 段都视为越界并抛出 ValueError。",
         files={"path_text.py": "def normalize_relative_path(path):\n    return path.replace('\\\\', '/')\n"},
         solution_files={"path_text.py": "def normalize_relative_path(path):\n    parts = []\n    for part in path.replace('\\\\', '/').split('/'):\n        if part in ('', '.'):\n            continue\n        if part == '..':\n            raise ValueError('path escapes root')\n        parts.append(part)\n    return '/'.join(parts)\n"},
         hidden_test="""import pytest

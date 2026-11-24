@@ -1671,7 +1671,10 @@ class SessionStore:
 
 首次完整重复实测使用 `deepseek-chat`、20 个任务、每题运行 3 次，结果通过 54/60，
 假完成 2/60；原始报告保存在 `artifacts/real_coding_eval_20261124T183547Z.json`
-和同名 Markdown 文件中。
+和同名 Markdown 文件中。复盘发现路径任务的提示存在语义歧义；将“拒绝 .. 越界”
+明确为“任何 .. 段都拒绝”后，对该任务单独重跑 3 次全部通过（报告
+`artifacts/real_coding_eval_20261124T190220Z.json`）。两份报告分别保留，避免把
+修正提示词后的子项结果拼进旧整轮报告。
 
 ---
 
