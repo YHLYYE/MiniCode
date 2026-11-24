@@ -2,7 +2,7 @@
 
 > Reference: Claude Code architecture (reverse-engineered from how-claude-code-works),
 > implemented in **~7,350 lines of pure Python** with **zero LangChain dependency**.
-> 350 tests with explicit environment-dependent skips; core behavior is covered locally.
+> 359 tests with explicit environment-dependent skips; core behavior is covered locally.
 
 A ground-up AI Coding Agent with **while-true Agent Loop**, **progressive Skill routing**,
 **scoped conflict-aware Memory**, **3-tier Context Compression with measurable benchmarks**,
@@ -25,6 +25,7 @@ and **4-layer security**.
 | 8 | **Concurrent Tool Execution** | Tools declaring `is_concurrency_safe` run together via `asyncio.gather`; blocking I/O (file / network / SQLite) is pushed to threads with `asyncio.to_thread`, so reading N files costs 1× latency instead of N× |
 | 9 | **Persistent Task Graph** | `TaskCreate / TaskUpdate / TaskList` store dependency-aware tasks in `.minicode/tasks.json`. Dependencies and state transitions are enforced by the store; snapshots survive session restart and context compression |
 | 10 | **Lifecycle Hook Registry** | Typed callbacks run in registration order at prompt, model, compression, tool and stop boundaries. A `BEFORE_TOOL` hook can deny execution; hook failures are wrapped and fail closed instead of silently running the tool |
+| 11 | **Real Coding-Task Evaluation** | 20 versioned Python tasks run in clean Git workspaces with hidden acceptance tests. The report records pass/fail, false completion, turns, tokens, cost, latency, tool errors and the final patch |
 
 ---
 
@@ -273,13 +274,36 @@ asynchronous hook exception is wrapped as `HookError`; a failed tool hook is
 recorded as a tool error and prevents execution. The built-in permission review
 is itself registered as a `BEFORE_TOOL` hook.
 
+### Real coding-task evaluation
+
+The 20-task suite in `benchmarks/coding_task_set.py` covers boundaries,
+parsing, algorithms, data structures, state, reliability, safety and
+multi-file changes. Each task includes a reference solution used only to prove
+that the fixture is solvable.
+
+```bash
+# Offline fixture gate: initial code must fail, reference solution must pass
+python -m benchmarks.real_coding_eval --validate-fixtures
+
+# Real model evaluation with hidden-test acceptance
+python -m benchmarks.real_coding_eval --repeats 1 --output-dir artifacts
+
+# One-task smoke run
+python -m benchmarks.real_coding_eval --task clamp_bounds --repeats 1
+```
+
+The agent runs inside a disposable Git workspace and never sees the hidden
+tests. Tests are copied in only after the session ends, so `claimed completion`
+cannot inflate the pass rate. Missing provider credentials fail before a report
+is created.
+
 ---
 
 ## 🧪 Tests
 
 ```bash
 python -m pytest tests/ -v
-# 350 collected
+# 359 collected
 ```
 
 ---
@@ -318,7 +342,7 @@ minicode/
 ├── skills/                     # Skill definitions (markdown)
 │   └── code_review.md          # Example skill
 │
-└── tests/                      # 350 tests
+└── tests/                      # 359 tests
 ```
 
 ---

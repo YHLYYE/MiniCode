@@ -85,7 +85,7 @@ Desktop/minicode/
 ├── session_store.py           # 对话持久化（--resume）
 ├── main.py                    # CLI 入口（交互式 REPL）
 ├── requirements.txt
-└── tests/                     # 350 个测试
+└── tests/                     # 359 个测试
     ├── test_agent_loop.py     # Agent Loop + 恢复路径
     ├── test_skill.py          # Skill 路由
     ├── test_memory.py         # 三类记忆
@@ -1645,6 +1645,33 @@ class SessionStore:
 - benchmarks/record.py        — 3 个标准任务 + Token/Cache 对比
 - docs/interview_qa.md        — 面试问答准备
 ```
+
+### 10.1 真实编码任务评测
+
+`benchmarks/coding_task_set.py` 定义 20 个固定任务，覆盖边界处理、解析、
+算法、数据结构、状态、可靠性、安全和多文件修改。每个任务同时包含初始代码、
+隐藏验收测试和参考解；参考解只用于证明夹具可解，不会进入 Agent 工作区。
+
+`benchmarks/real_coding_eval.py` 的执行顺序：
+
+```text
+创建临时目录
+  -> 写入初始仓库
+  -> git commit 固化基线
+  -> 真实模型运行 MiniCode
+  -> 保存补丁和工具/模型指标
+  -> 此时才复制隐藏测试
+  -> pytest 验收
+  -> 写 JSON + Markdown 原始报告
+```
+
+报告区分 `claimed_completion` 与 `passed`。模型声称完成但隐藏测试失败才会被计为
+假完成；命中最大轮次或预算则保持失败状态。评测可在临时目录内显式开启自动批准，
+但这个环境变量只在评测上下文生效，退出后恢复。
+
+首次完整重复实测使用 `deepseek-chat`、20 个任务、每题运行 3 次，结果通过 54/60，
+假完成 2/60；原始报告保存在 `artifacts/real_coding_eval_20261124T183547Z.json`
+和同名 Markdown 文件中。
 
 ---
 
